@@ -4,11 +4,7 @@ Handles weight synchronization, model setup, and distributed training coordinati
 """
 
 import os
-import random
-import time
 from loguru import logger
-import filelock
-from speedy_utils import dump_json_or_pickle
 
 SLEEP_WAIT_DATASET_TIMEOUT = 1800
 from .hypersloth_config import HyperConfig, TrainingArgsConfig
@@ -21,9 +17,6 @@ def setup_model_and_training(
     """
     Setup the model, tokenizer, dataset, and trainer for multi-GPU training.
     """
-    
-    # T
-
     gpu_ith = int(os.environ["HYPERSLOTH_LOCAL_RANK"])
     num_gpus = int(os.environ["HYPERSLOTH_NUM_GPUS"])
     if num_gpus!=1:

@@ -7,9 +7,9 @@ hyper_config_model = HyperConfig(
         group_by_length=True,
         instruction_part="<start_of_turn>user\n",
         response_part="<start_of_turn>model\n",
-        dataset_num_proc=128,
+        dataset_num_proc=16,
         test_ratio=0.01,
-        num_samples=600000,
+        num_samples=100000,
     ),
     training=TrainingConfig(
         gpus=[0,1,2,3,4,5,6,7],
@@ -17,10 +17,9 @@ hyper_config_model = HyperConfig(
         # chat_template='google/gemma-3-12b-it'
     ),
     fast_model_args=FastModelArgs(
-        model_name="unsloth/gemma-3-12b-it",
+        model_name="unsloth/gemma-3-27b-it",
         max_seq_length=7_000,
     ),
-    # pretrained_lora="/shared-mnt/loras/gemma-3-27b-it-bnb-4bit_teacher_messages_deepseek_direct/loss_response_only_lora_r16_a16_seq_7000_lr_0_0001_global_bz_16_epochs_2_seed_42_mmap/",
     lora_args=LoraArgs(
         r=16,
         lora_alpha=16,
@@ -31,11 +30,11 @@ hyper_config_model = HyperConfig(
 # Training arguments using Pydantic model
 training_config_model = TrainingArgsConfig(
     output_dir="/shared-mnt/loras/",
-    per_device_train_batch_size=2,
-    gradient_accumulation_steps=8,  # Meaing 8*4*4=128 examples per step
+    per_device_train_batch_size=1,
+    gradient_accumulation_steps=16,  # Meaing 8*4*4=128 examples per step
     num_train_epochs=1,
     learning_rate=1e-4,
-    eval_steps=1000,
+    eval_steps=100,
     logging_steps=1,
     report_to="tensorboard",
     lr_scheduler_type="linear",
