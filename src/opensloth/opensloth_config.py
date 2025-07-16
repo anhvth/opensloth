@@ -113,7 +113,8 @@ class TrainingArguments(BaseModel):
     logging_steps: int = 1
     num_train_epochs: int = 1
     lr_scheduler_type: str = "linear"
-    warmup_steps: int = 5
+    warmup_steps: int = 0
+    warmup_ratio: float = 0.0
     save_total_limit: int = 2
     optim: str = "adamw_8bit"
     weight_decay: float = 0.01
