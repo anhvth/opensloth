@@ -192,6 +192,22 @@ def _get_trainer(
 
     logger = get_opensloth_logger()
 
+    # Validate warmup parameters
+    if hf_train_args.warmup_ratio == 0 and hf_train_args.warmup_steps == 0:
+        raise ValueError("Both warmup_ratio and warmup_steps cannot be 0. At least one must be greater than 0.")
+    
+    # Handle warmup parameters based on conditions
+    if hf_train_args.warmup_steps > 0:
+        # Use warmup_steps and remove warmup_ratio
+        hf_train_args_dict = hf_train_args.to_dict()
+        hf_train_args_dict.pop('warmup_ratio', None)
+        hf_train_args = TrainingArguments(**hf_train_args_dict)
+    elif hf_train_args.warmup_steps == 0:
+        # Use warmup_ratio and remove warmup_steps
+        hf_train_args_dict = hf_train_args.to_dict()
+        hf_train_args_dict.pop('warmup_steps', None)
+        hf_train_args = TrainingArguments(**hf_train_args_dict)
+
     logger.info(f"Loading dataset from {opensloth_config.data_cache_path}")
     try:
         train_dataset = load_from_disk(opensloth_config.data_cache_path)
