@@ -51,19 +51,26 @@ def get_callback_and_setup_method():
         """Setup NCCL environment variables for opensloth integration."""
         if len(gpus) <= 1:
             return
+
         import os
+        import socket
 
         import torch.distributed as dist
 
         world_size = len(gpus)
 
-        # Set required NCCL environment variables
-        os.environ["MASTER_ADDR"] = "127.0.0.1"  # Localhost for single machine
+        # Force NCCL to use IPv4 sockets only if no IPv6 support
+        if not socket.has_ipv6:
+            os.environ.setdefault('NCCL_SOCKET_FAMILY', 'AF_INET')
+
+        # Set required NCCL environment variables for single machine
+        os.environ["NCCL_SOCKET_IFNAME"] = "lo"
+        os.environ["MASTER_ADDR"] = "127.0.0.1"
+
         if "MASTER_PORT" not in os.environ:
             os.environ["MASTER_PORT"] = "29501"  # Use fixed port
         print(f"[RANK={rank}] {os.environ}")
-        dist.init_process_group(
-            backend="nccl", init_method="env://", rank=rank, world_size=world_size
-        )
+
+        dist.init_process_group(backend="nccl", init_method="env://", rank=rank, world_size=world_size)
 
     return NCCLGradSyncCallback, setup_nccl_for_opensloth
