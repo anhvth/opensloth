@@ -100,7 +100,7 @@ def debug_chat_dataloader_for_training(dataloader, tokenizer, n_example=10):
     """
         )
 
-        max_print_tokens = 200
+        max_print_tokens = 20000
         html_parts = []  # Collect HTML parts for batch writing
 
         for i in range(n_example):
