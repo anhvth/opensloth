@@ -4,6 +4,16 @@ from unsloth import FastLanguageModel
 from peft import PeftModel
 from llmcompressor.transformers import oneshot
 from llmcompressor.modifiers.quantization import QuantizationModifier
+import llmcompressor
+from packaging import version
+import warnings
+
+required_version = "0.6.0.1"
+current_version = llmcompressor.__version__
+if version.parse(current_version) < version.parse(required_version):
+    raise RuntimeError(f"llmcompressor>={required_version} required, found {current_version}")
+elif version.parse(current_version) > version.parse(required_version):
+    warnings.warn(f"llmcompressor version {current_version} is newer than tested {required_version}. Proceed with caution.")
 
 def main(base, lora, outdir):
     model, tokenizer = FastLanguageModel.from_pretrained(base,
