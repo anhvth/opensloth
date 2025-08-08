@@ -41,6 +41,7 @@ dependencies = [
     "pydantic (>=2.8.0,<3.0.0)",
     "gradio (>=4.44.0,<5.0.0)",
     "tabulate (>=0.9.0,<1.0.0)",
+    "typer (>=0.16.0,<0.17.0)",
 ]
 
 [project.urls]
@@ -51,6 +52,8 @@ Documentation = "https://github.com/anhvth/opensloth"
 
 [project.scripts]
 opensloth-sft-train = "opensloth.scripts.opensloth_sft_trainer:main"
+opensloth-dataset = "opensloth.scripts.dataset_cli_simple:main"
+opensloth-train = "opensloth.scripts.train_cli_simple:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
