@@ -2,9 +2,10 @@ import importlib.util
 import os
 import sys
 import time
+from typing import Any, List
 import warnings
 
-from fastcore.all import call_parse
+import argparse
 
 from opensloth.logging_config import OpenslothLogger
 from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
@@ -28,10 +29,37 @@ def get_current_python_path():
         return None
 
 
+def _import_unsloth(gpu: int) -> None|List[Any]:
+    import os
+    os.makedirs(f".cache/", exist_ok=True)
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
+    os.environ["UNSLOTH_COMPILE_LOCATION"] = f".cache/UNSLOTH_CACHE_DIR_{gpu}"
+
+    try:
+        unsloth_is_not_imported = "unsloth" not in ''.join(sys.modules.keys())
+        trl_is_not_imported = "trl" not in ''.join(sys.modules.keys())
+        assert unsloth_is_not_imported 
+        assert trl_is_not_imported
+        #====
+        import unsloth # unsloth must be import before trl
+        from trl import SFTConfig, SFTTrainer
+        print("Unsloth version:", unsloth.__version__)
+        return unsloth, SFTConfig, SFTTrainer
+    except AttributeError as e:
+        import warnings
+        if "Unsloth" in str(e) and "has no attribute" in str(e):
+            warnings.warn(
+                f"[OpenSloth] Unsloth RL patching error detected: {e}\n"
+                "This is likely due to a corrupted or stale compiled cache. "
+                "consider `rm -r unsloth_compiled_cache` and try again"
+            )
+        raise
+
 def train_on_single_gpu(
     gpu: int, opensloth_config: OpenSlothConfig, hf_train_args: TrainingArguments
 ):
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
+    
+    _import_unsloth(gpu)
     from opensloth.opensloth_trainer_setup import setup_model_and_training
 
     os.environ["OPENSLOTH_LOCAL_RANK"] = str(opensloth_config.devices.index(gpu))
@@ -51,6 +79,120 @@ def train_on_single_gpu(
         hf_train_args=hf_train_args,
     )
     logger.finish_timing("model_and_training_setup")
+
+    # Register a debug hook to assert batch shape consistency early with rich logs.
+    def _register_batch_shape_assertion(_model, _logger: OpenslothLogger):
+        """
+        Asserts that input_ids, labels, and attention_mask (if present) have
+        compatible shapes before the model forward. If a mismatch is detected,
+        raises AssertionError with detailed context so issues are obvious
+        instead of failing deep inside fused CE.
+        """
+
+        def _pre_hook(_mod, _args, _kwargs):
+            try:
+                input_ids = _kwargs.get("input_ids")
+                labels = _kwargs.get("labels")
+                attention_mask = _kwargs.get("attention_mask")
+
+                # Only validate when training with labels
+                if input_ids is None or labels is None:
+                    return
+
+                # Shapes
+                try:
+                    ids_shape = tuple(input_ids.size())
+                    lbl_shape = tuple(labels.size())
+                except Exception:
+                    # If objects don't have size (unlikely), skip
+                    return
+
+                msg_prefix = "[OpenSloth Debug] Batch shape check failed: "
+
+                # Basic dimension count check
+                if labels.dim() != input_ids.dim():
+                    raise AssertionError(
+                        f"{msg_prefix}ndim mismatch -> input_ids {ids_shape} vs labels {lbl_shape}"
+                    )
+
+                # Typical LM training expects equal (B, L). If not, raise with advice.
+                if ids_shape != lbl_shape:
+                    advice = ""
+                    if len(ids_shape) == 2 and len(lbl_shape) == 2:
+                        if lbl_shape[-1] + 1 == ids_shape[-1] or lbl_shape[-1] == ids_shape[-1] + 1:
+                            advice = "Possible off-by-one from shifting labels/padding. Ensure labels align to input_ids."
+                    # Non-ignored label count can reveal masking issues
+                    try:
+                        non_ignored = int((labels != -100).sum().item())
+                    except Exception:
+                        non_ignored = -1
+                    raise AssertionError(
+                        f"{msg_prefix}input_ids {ids_shape} != labels {lbl_shape}. {advice} "
+                        f"non_ignored_labels={non_ignored} total_labels={getattr(labels, 'numel', lambda: 'n/a')()}"
+                    )
+
+                # attention_mask, if provided, is valid when:
+                # - 2D and equals (B, L)
+                # - 3D causal mask (B, L, L)
+                if attention_mask is not None:
+                    am_shape = tuple(attention_mask.size())
+                    if len(am_shape) == 2:
+                        if am_shape != ids_shape:
+                            raise AssertionError(
+                                f"{msg_prefix}attention_mask {am_shape} != input_ids {ids_shape}"
+                            )
+                    elif len(am_shape) == 3:
+                        b, l = ids_shape
+                        if not (am_shape[0] == b and am_shape[1] == l and am_shape[2] == l):
+                            raise AssertionError(
+                                f"{msg_prefix}3D attention_mask {am_shape} expected (B, L, L) matching input_ids {ids_shape}"
+                            )
+                    else:
+                        raise AssertionError(
+                            f"{msg_prefix}unsupported attention_mask ndim={len(am_shape)} shape={am_shape}"
+                        )
+
+                # Sanity: make sure we have some tokens to learn from
+                try:
+                    non_ignored = int((labels != -100).sum().item())
+                    if non_ignored == 0:
+                        raise AssertionError(
+                            f"{msg_prefix}all labels are -100 (ignored). Check response-only masking and packing."
+                        )
+                except Exception:
+                    pass
+
+            except AssertionError as e:
+                gpu_env = os.environ.get("CUDA_VISIBLE_DEVICES", "?")
+                rank_env = os.environ.get("OPENSLOTH_LOCAL_RANK", "?")
+                _logger.error(f"[GPU {gpu_env} | local_rank {rank_env}] {e}")
+                # Extra stats (best-effort)
+                try:
+                    ids_dtype = getattr(locals().get("input_ids", None), "dtype", None)
+                    ids_device = getattr(locals().get("input_ids", None), "device", None)
+                    lbl_dtype = getattr(locals().get("labels", None), "dtype", None)
+                    lbl_device = getattr(locals().get("labels", None), "device", None)
+                    _logger.error(
+                        f"Input stats: ids dtype={ids_dtype} device={ids_device} | labels dtype={lbl_dtype} device={lbl_device}"
+                    )
+                except Exception:
+                    pass
+                raise
+
+        try:
+            handle = _model.register_forward_pre_hook(_pre_hook, with_kwargs=True)  # type: ignore[arg-type]
+            setattr(_model, "_opensloth_debug_shape_hook", handle)  # keep it alive
+            _logger.info("Registered batch shape assertion hook")
+        except TypeError:
+            # Older PyTorch may not support with_kwargs; fall back to positional
+            def _pre_hook_no_kwargs(_mod, _args):
+                return _pre_hook(_mod, _args, {})
+
+            handle = _model.register_forward_pre_hook(_pre_hook_no_kwargs)  # type: ignore[arg-type]
+            setattr(_model, "_opensloth_debug_shape_hook", handle)
+            _logger.info("Registered batch shape assertion hook (positional)")
+
+    _register_batch_shape_assertion(trainer.model, logger)
 
     assert trainer.model is not None, "Trainer model is None"
 
@@ -313,38 +455,38 @@ def setup_envs(opensloth_config: OpenSlothConfig, training_config: TrainingArgum
     os.environ["OPENSLOTH_LOG_LEVEL"] = opensloth_config.log_level
 
 
-@call_parse
-def train(
-    config_file: str,
-    rank: int | None = None,
-    world_size: int | None = None,
-    tmux: str | None = None,
-    y: bool = False,
-):
-    opensloth_config, training_config = initialize_training_config(config_file)
+
+def main():
+    parser = argparse.ArgumentParser(description="OpenSloth SFT Trainer")
+    parser.add_argument("config_file", type=str, help="Path to config file")
+    parser.add_argument("--rank", type=int, default=None, help="Local rank for distributed training")
+    parser.add_argument("--world_size", type=int, default=None, help="World size for distributed training")
+    parser.add_argument("--tmux", type=str, default=None, help="tmux session name")
+    parser.add_argument("-y", action="store_true", help="Auto-kill existing tmux session")
+    args = parser.parse_args()
+
+    opensloth_config, training_config = initialize_training_config(args.config_file)
 
     # CASE 1: Child process => single GPU
-    if rank is not None and world_size is not None:
-        print(f"[CASE 1] Running on rank {rank} with world size {world_size}")
+    if args.rank is not None and args.world_size is not None:
+        print(f"[CASE 1] Running on rank {args.rank} with world size {args.world_size}")
         train_on_single_gpu(
-            gpu=opensloth_config.devices[rank],
+            gpu=opensloth_config.devices[args.rank],
             opensloth_config=opensloth_config,
             hf_train_args=training_config,
         )
         return
 
     # CASE 2: Top-level process => spawn multi-GPU or single GPU
-
-    # If multiple GPUs:
     if len(opensloth_config.devices) > 1:
-        if os.environ.get("USE_TMUX", "0") == "1" or tmux is not None:
-            session_name = tmux if tmux is not None else "train_hp"
+        if os.environ.get("USE_TMUX", "0") == "1" or args.tmux is not None:
+            session_name = args.tmux if args.tmux is not None else "train_hp"
             run_tmux_training(
                 session_name=session_name,
-                config_file=config_file,
+                config_file=args.config_file,
                 training_config=training_config,
                 gpus=opensloth_config.devices,
-                auto_kill=y,
+                auto_kill=args.y,
             )
         else:
             run_mp_training(
@@ -354,9 +496,13 @@ def train(
             )
     else:
         # Single GPU
-        assert tmux is None, "Cannot use tmux with a single GPU"
+        assert args.tmux is None, "Cannot use tmux with a single GPU"
         train_on_single_gpu(
             gpu=opensloth_config.devices[0],
             opensloth_config=opensloth_config,
             hf_train_args=training_config,
         )
+
+
+if __name__ == "__main__":
+    main()

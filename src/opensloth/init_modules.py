@@ -17,7 +17,7 @@ def init_model_and_tokenizer(opensloth_config: OpenSlothConfig):
     cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
     assert len(cuda_devices) == 1
 
-    from unsloth import FastModel
+    from unsloth import FastLanguageModel
 
     logger = get_opensloth_logger()
 
@@ -29,30 +29,10 @@ def init_model_and_tokenizer(opensloth_config: OpenSlothConfig):
         )
         opensloth_config.fast_model_args.model_name = opensloth_config.pretrained_lora
 
-    model, tokenizer = FastModel.from_pretrained(
+    model, tokenizer = FastLanguageModel.from_pretrained(
         **opensloth_config.fast_model_args.model_dump()
     )
-    if (
-        "gemma-3" in opensloth_config.fast_model_args.model_name
-        and opensloth_config.sequence_packing
-    ):
-        logger.info(
-            "Detected Gemma3 model, applying Unsloth patch for sequence packing."
-        )
-        patch_gemma3_unsloth_for_sequence_packing()
-
-    if not hasattr(tokenizer, "pad") and opensloth_config.sequence_packing:
-        logger.info(
-            "Tokenizer missing 'pad' method; attempting to patch using "
-            "transformers.AutoTokenizer. This may indicate an Unsloth issue. "
-            "See: https://github.com/unslothai/unsloth/issues/2056#event-17007147800"
-        )
-        from transformers import AutoTokenizer
-
-        hf_tokenizer = AutoTokenizer.from_pretrained(
-            opensloth_config.fast_model_args.model_name,
-        )
-        tokenizer.pad = hf_tokenizer.pad
+    _maybe_hot_fix_gemma(opensloth_config, logger, tokenizer)
 
     logger.finish_timing("model_loading")
 
@@ -76,6 +56,7 @@ def init_model_and_tokenizer(opensloth_config: OpenSlothConfig):
         and not opensloth_config.pretrained_lora
     ):
         logger.start_timing("lora_setup")
+        from unsloth import FastModel
         model = FastModel.get_peft_model(
             model,
             **opensloth_config.lora_args.model_dump(),  # type: ignore
@@ -83,6 +64,29 @@ def init_model_and_tokenizer(opensloth_config: OpenSlothConfig):
         logger.finish_timing("lora_setup")
 
     return model, tokenizer
+
+def _maybe_hot_fix_gemma(opensloth_config, logger, tokenizer):
+    if (
+        "gemma-3" in opensloth_config.fast_model_args.model_name
+        and opensloth_config.sequence_packing
+    ):
+        logger.info(
+            "Detected Gemma3 model, applying Unsloth patch for sequence packing."
+        )
+        patch_gemma3_unsloth_for_sequence_packing()
+
+    if not hasattr(tokenizer, "pad") and opensloth_config.sequence_packing:
+        logger.info(
+            "Tokenizer missing 'pad' method; attempting to patch using "
+            "transformers.AutoTokenizer. This may indicate an Unsloth issue. "
+            "See: https://github.com/unslothai/unsloth/issues/2056#event-17007147800"
+        )
+        from transformers import AutoTokenizer
+
+        hf_tokenizer = AutoTokenizer.from_pretrained(
+            opensloth_config.fast_model_args.model_name,
+        )
+        tokenizer.pad = hf_tokenizer.pad
 
 
 def create_trainer(
@@ -112,8 +116,9 @@ def create_trainer(
     from opensloth.patching.inner_training_loop import patch_inner_training_loop
     from opensloth.patching.patch_log import patch_log
     from opensloth.patching.patch_sampler import patch_sampler
+    # from trl import SFTConfig, SFTTrainer
 
-    patch_log(type(trainer))
+    patch_log(trainer)
     patch_inner_training_loop(trainer, opensloth_config.sequence_packing)
 
     from .patching.get_batch_samples import patch_get_batch_samples
@@ -196,7 +201,33 @@ def _get_trainer(
     try:
         train_dataset = load_from_disk(opensloth_config.data_cache_path)
         _ensure_data_correct(train_dataset)
-    except:
+        # Proactive filtering: drop samples longer than model max length if enabled
+        max_len = int(opensloth_config.fast_model_args.max_seq_length)
+        if opensloth_config.filter_overlength_samples:
+            before_n = len(train_dataset)
+            def _len_ok(ex):
+                ids = ex.get("input_ids")
+                # Accept None (let collator handle) but prefer to keep simple robust check
+                if ids is None:
+                    return True
+                # Some datasets store arrays; use generic len when possible
+                try:
+                    return len(ids) <= max_len
+                except Exception:
+                    return True
+            train_dataset = train_dataset.filter(
+                _len_ok,
+                num_proc=getattr(hf_train_args, "dataset_num_proc", 1),
+            )
+            after_n = len(train_dataset)
+            dropped = before_n - after_n
+            if dropped > 0:
+                logger.warning(
+                    f"Filtered {dropped}/{before_n} samples ({dropped/max(1,before_n):.2%}) exceeding max_len={max_len}."
+                )
+            else:
+                logger.info("No over-length samples found during dataset validation.")
+    except Exception:
         logger.error(
             f"Failed to load dataset from {opensloth_config.data_cache_path}. "
             "Please verify that the path exists and the dataset is correctly prepared. "

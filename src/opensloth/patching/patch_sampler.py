@@ -9,7 +9,7 @@ from opensloth.logging_config import get_opensloth_logger
 
 
 class ShuffleData(TrainerCallback):
-    def on_epoch_begin(self, state):
+    def on_epoch_begin(self, args, state, control, **kwargs):
         local_rank = int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0"))
 
         if local_rank != 0:

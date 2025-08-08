@@ -109,7 +109,7 @@ class Flag:
             self.mem.flush()
 
 
-def patch_log(t: type) -> type:
+def patch_log(trainer):
     support_keys = [
         "loss",
         "grad_norm",
@@ -148,12 +148,12 @@ def patch_log(t: type) -> type:
         print(f"[{local_rank=}] Log patch initialization complete.")
 
     except Exception as e:
-    print(f"[{local_rank=}] CRITICAL ERROR during initialization: {e}")
+        print(f"[{local_rank=}] CRITICAL ERROR during initialization: {e}")
         raise e
 
     @patch
     def log(
-        self, logs: dict[str, float], start_time: float | None = None
+        self:type(trainer), logs: dict[str, float], start_time: float | None = None
     ) -> None:
         if self.state.epoch is not None:
             logs["epoch"] = round(self.state.epoch, 2)
@@ -203,8 +203,7 @@ def patch_log(t: type) -> type:
             self.control = self.callback_handler.on_log(
                 self.args, self.state, self.control, logs
             )
-
-    return t
+    return trainer
 
 
 def _wait_for_directory(cache_dir: str, rank: int) -> None:

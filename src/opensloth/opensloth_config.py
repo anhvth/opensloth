@@ -85,6 +85,15 @@ class OpenSlothConfig(BaseModel):
         description="Logging level for the training process",
     )
 
+    # Dataset validation behavior
+    filter_overlength_samples: bool = Field(
+        default=True,
+        description=(
+            "If True, filter out dataset samples whose input_ids length exceeds "
+            "fast_model_args.max_seq_length before training."
+        ),
+    )
+
     class Config:
         """Pydantic configuration for DataConfig."""
 

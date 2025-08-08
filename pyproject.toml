@@ -47,7 +47,7 @@ Documentation = "https://github.com/anhvth/opensloth"
 "Bug Tracker" = "https://github.com/anhvth/opensloth/issues"
 
 [project.scripts]
-opensloth-sft-train = "opensloth.scripts.opensloth_sft_trainer:train"
+opensloth-sft-train = "opensloth.scripts.opensloth_sft_trainer:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
@@ -57,8 +57,6 @@ build-backend = "poetry.core.masonry.api"
 name = "opensloth"
 packages = [{ include = "opensloth", from = "src" }]
 
-[tool.poetry.scripts]
-opensloth-train = "opensloth.scripts.opensloth_sft_trainer:train"
 
 [tool.ruff]
 line-length = 120
