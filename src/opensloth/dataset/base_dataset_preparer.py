@@ -66,6 +66,8 @@ class BaseDatasetPreparer(ABC):
                           help='Output directory for the processed dataset')
         
         # Training configuration
+        parser.add_argument('--max_seq_length', type=int, default=4096,
+                          help='Maximum sequence length for tokenization (tokens longer than this will be filtered out)')
         parser.add_argument('--train_on_target_only', action='store_true', default=True,
                           help='Whether to mask non-assistant tokens for response-only training')
         parser.add_argument('--instruction_part', type=str, default=self.get_default_instruction_part(),
@@ -135,8 +137,11 @@ class BaseDatasetPreparer(ABC):
             count = f"debug{self.args.debug}"
         else:
             count = "all"
+        
+        # Include max sequence length in the directory name
+        length_tag = f"l{self.args.max_seq_length}"
             
-        return f"{model_name}-{dataset_name}-{split}-{count}-processed"
+        return f"{model_name}-{dataset_name}-{split}-{count}-{length_tag}-processed"
     
     def setup_configuration(self):
         """Setup and print configuration."""
@@ -144,6 +149,7 @@ class BaseDatasetPreparer(ABC):
             "Tokenizer/model": self.args.tok_name,
             "Dataset": f"{self.args.dataset_name} [split: {self.args.split}]",
             "Chat template": self.args.chat_template,
+            "Max sequence length": self.args.max_seq_length,
             "Train on target only": self.args.train_on_target_only,
             "Num samples": self.args.num_samples,
             "Num processes": self.args.num_proc,
@@ -290,6 +296,9 @@ class BaseDatasetPreparer(ABC):
         
         data = dataset.map(process_one, num_proc=self.args.num_proc)
 
+        # Filter out examples that are too long or have no training labels
+        data = self.filter_dataset(data)
+
         if self.args.train_on_target_only and "all_masked" in data.column_names:
             total_all_masked = sum(data["all_masked"])
             if total_all_masked > 0:
@@ -298,6 +307,35 @@ class BaseDatasetPreparer(ABC):
         self._last_size = len(data)
         print(f"[INFO] Tokenization complete. Dataset size: {self._last_size}")
         return data
+    
+    def filter_dataset(self, data: datasets.Dataset) -> datasets.Dataset:
+        """Filter out examples that are too long or have no training labels."""
+        max_length = self.args.max_seq_length
+        
+        def should_keep(example):
+            # Filter out examples that are too long
+            if len(example["input_ids"]) > max_length:
+                return False
+            
+            # Filter out examples with no training labels (all -100)
+            if self.args.train_on_target_only and "all_masked" in example:
+                if example["all_masked"] == 1:  # All labels are -100
+                    return False
+            
+            return True
+        
+        print(f"[INFO] Filtering dataset: max_seq_length={max_length}")
+        filtered_data = data.filter(should_keep, num_proc=self.args.num_proc)
+        
+        # Report filtering statistics
+        original_count = len(data)
+        filtered_count = len(filtered_data)
+        removed_count = original_count - filtered_count
+        
+        if removed_count > 0:
+            print(f"[INFO] Filtered out {removed_count}/{original_count} examples ({removed_count/original_count*100:.1f}%) that were too long (>{max_length} tokens) or had no training labels")
+        
+        return filtered_data
     
     def debug_visualization(self, data: datasets.Dataset):
         """Create debug visualization if debug mode is enabled."""
@@ -359,6 +397,7 @@ class BaseDatasetPreparer(ABC):
             "chat_template": self.args.chat_template,
             "dataset_name": self.args.dataset_name,
             "split": self.args.split,
+            "max_seq_length": self.args.max_seq_length,
             "num_samples": self.args.num_samples,
             "train_on_target_only": self.args.train_on_target_only,
             "instruction_part": self.args.instruction_part if self.args.train_on_target_only else None,

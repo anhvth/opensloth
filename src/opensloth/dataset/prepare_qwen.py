@@ -8,19 +8,19 @@ class QwenDatasetPreparer(BaseDatasetPreparer):
         return "Prepare Qwen dataset with tokenization and formatting."
     
     def get_default_tokenizer(self) -> str:
-        return 'unsloth/Qwen3-32B'
+        return 'unsloth/Qwen2.5-0.5B-Instruct'
     
     def get_default_chat_template(self) -> str:
-        return "qwen-3"
+        return "qwen-2.5"
     
     def get_default_dataset_name(self) -> str:
         return 'mlabonne/FineTome-100k'
     
     def get_default_instruction_part(self) -> str:
-        return '<start_of_turn>user\n'
+        return '<|im_start|>user\n'
     
     def get_default_response_part(self) -> str:
-        return '<start_of_turn>assistant\n'
+        return '<|im_start|>assistant\n'
     
     def add_custom_arguments(self, parser):
         """Add Qwen-specific arguments."""

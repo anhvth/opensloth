@@ -201,6 +201,10 @@ def _get_trainer(
     try:
         train_dataset = load_from_disk(opensloth_config.data_cache_path)
         _ensure_data_correct(train_dataset)
+        
+        # Validate dataset configuration compatibility
+        _validate_dataset_compatibility(opensloth_config.data_cache_path, opensloth_config.fast_model_args.max_seq_length)
+        
         # Proactive filtering: drop samples longer than model max length if enabled
         max_len = int(opensloth_config.fast_model_args.max_seq_length)
         if opensloth_config.filter_overlength_samples:

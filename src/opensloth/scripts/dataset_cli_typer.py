@@ -20,13 +20,16 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.progress import track
 
-# Import from the proper module structure
-from opensloth.dataset import (
-    DatasetPrepConfig,
-    BaseDatasetPreparer,
-    QwenDatasetPreparer,
-    GemmaDatasetPreparer
-)
+# Lazy imports to avoid slow startup
+def _get_preparers():
+    """Lazy import of dataset preparers to avoid slow CLI startup."""
+    from opensloth.dataset import (
+        DatasetPrepConfig,
+        BaseDatasetPreparer,
+        QwenDatasetPreparer,
+        GemmaDatasetPreparer
+    )
+    return DatasetPrepConfig, BaseDatasetPreparer, QwenDatasetPreparer, GemmaDatasetPreparer
 
 app = typer.Typer(
     name="opensloth-dataset",
@@ -287,6 +290,9 @@ def prepare_dataset(
     # Run the dataset preparation
     try:
         console.print(f"\n🔄 Starting dataset preparation...")
+        
+        # Lazy import dataset preparers
+        DatasetPrepConfig, BaseDatasetPreparer, QwenDatasetPreparer, GemmaDatasetPreparer = _get_preparers()
         
         # Determine which preparer to use
         model_name = config["tok_name"]

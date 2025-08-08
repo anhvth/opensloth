@@ -10,6 +10,8 @@ import os
 import sys
 import json
 import subprocess
+import re
+import shutil
 from pathlib import Path
 from typing import Optional, List, Annotated
 from datetime import datetime
@@ -20,11 +22,6 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.progress import track
-
-# Add the parent directory to sys.path for imports
-current_dir = Path(__file__).parent.parent
-if str(current_dir) not in sys.path:
-    sys.path.insert(0, str(current_dir))
 
 app = typer.Typer(
     name="opensloth-train",
@@ -675,7 +672,7 @@ def train_model(
         
         # Call the existing training script
         proc = subprocess.Popen(
-            ['python', 'prepare_dataset/run_train_job.py'],
+            ['python', 'src/opensloth/dataset/run_train_job.py'],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
