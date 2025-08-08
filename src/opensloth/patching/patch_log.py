@@ -153,7 +153,7 @@ def patch_log(trainer):
 
     @patch
     def log(
-        self:type(trainer), logs: dict[str, float], start_time: float | None = None
+        self:type(trainer), logs: dict[str, float], start_time: float | None = None # pyright: ignore[reportInvalidTypeForm]
     ) -> None:
         if self.state.epoch is not None:
             logs["epoch"] = round(self.state.epoch, 2)

@@ -6,27 +6,24 @@ pip install unsloth==2025.5.7 unsloth-zoo==2025.5.8
 
 from opensloth.opensloth_config import (
     FastModelArgs,
-    HFDatasetConfig,
     LoraArgs,
     OpenSlothConfig,
     TrainingArguments,
 )
 from opensloth.scripts.opensloth_sft_trainer import run_mp_training, setup_envs
 
-# 2 GPUs with packing configuration
 GLOBAL_BZ = 32
 
 DEVICES = [0, 2]
 
 BZ = 2
-# You need to first cache the dataset:
-# RUN: python cache_unsloth_dataset/gemma.py
+
 
 opensloth_config = OpenSlothConfig(
-    data=HFDatasetConfig(cache_path="data/cache_gemma_responses_only"),
+    data_cache_path="data/cache_gemma_responses_only",
     devices=DEVICES,
     fast_model_args=FastModelArgs(
-        model_name="unsloth/gemma-3-4b-it-unsloth-bnb-4bit",
+        model_name="unsloth/gemma-3-1b-it-unsloth-bnb-4bit",
         max_seq_length=16000,
         load_in_4bit=True,
     ),

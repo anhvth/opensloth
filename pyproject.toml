@@ -38,6 +38,9 @@ dependencies = [
     "tensorboardx (>=2.6.2.2,<3.0.0.0)",
     "ruff (>=0.12.8,<0.13.0)",
     "unsloth (>=2025.8.1,<2026.0.0)",
+    "pydantic (>=2.8.0,<3.0.0)",
+    "gradio (>=4.44.0,<5.0.0)",
+    "tabulate (>=0.9.0,<1.0.0)",
 ]
 
 [project.urls]

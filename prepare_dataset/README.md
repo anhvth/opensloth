@@ -15,3 +15,19 @@ Follow these steps to extract and save a dataset from an Unsloth notebook:
    ```
 NOTE: this task is about saving the dataset, not training the model.
 This will store the processed dataset for later use.
+
+## OpenSloth Studio (GUI)
+
+You can now prepare datasets and launch training from a simple UI:
+
+1. Start the app:
+   - Programmatic: `python -m prepare_dataset.app_gradio`
+2. Use the "Data Processing" tab to generate a chat dataset (HF or local file):
+   - Choose model family (Qwen/Gemma)
+   - Fill tokenizer, chat template, dataset path/repo, and markers
+   - Click "Prepare Dataset"; output path is shown on success
+3. Use the "Training" tab to configure and run fine-tuning:
+   - Maps to `train_scripts/train_*.py` parameters (OpenSlothConfig + TrainingArguments)
+   - Click "Run Training" to start. Logs stream to the console.
+
+Programmatic API: every `prepare_*.py` preparer exposes `run_with_config(dict)` which returns the output directory.
