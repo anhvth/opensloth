@@ -318,6 +318,27 @@ class BaseDatasetPreparer(ABC):
                     json.dump(meta, f, ensure_ascii=False, indent=2)
             except Exception as e:
                 print(f"[WARN] Failed to write metadata.json: {e}")
+            
+            # Save complete config for debugging and reuse
+            try:
+                complete_config = vars(self.args).copy()
+                # Add model family info if available
+                if hasattr(self, '__class__'):
+                    if 'Qwen' in self.__class__.__name__:
+                        complete_config['model_family'] = 'Qwen'
+                    elif 'Gemma' in self.__class__.__name__:
+                        complete_config['model_family'] = 'Gemma'
+                    elif 'Llama' in self.__class__.__name__:
+                        complete_config['model_family'] = 'Llama'
+                    else:
+                        complete_config['model_family'] = 'Unknown'
+                
+                with open(os.path.join(self.args.output_dir, "dataset_config.json"), "w", encoding="utf-8") as f:
+                    json.dump(complete_config, f, ensure_ascii=False, indent=2)
+                print(f"[INFO] Config saved to {self.args.output_dir}/dataset_config.json")
+            except Exception as e:
+                print(f"[WARN] Failed to write dataset_config.json: {e}")
+            
             print(f"[INFO] Dataset saved to {self.args.output_dir}")
 
     # ------------------------------

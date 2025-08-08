@@ -4,10 +4,13 @@ import json
 import traceback
 import subprocess
 import signal
+import html
+import re
+import datetime
+from typing import Any
 
 import gradio as gr
-import re
-import html
+import commentjson
 
 # Add parent directory to path to allow imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -15,873 +18,741 @@ parent_dir = os.path.dirname(current_dir)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
+
 # Lazy import functions - import heavy modules only when needed
 def _get_dataset_prep_config():
-    try:
-        from prepare_dataset.config_schema import DatasetPrepConfig
-    except ImportError:
-        # Try absolute import from project root
-        import sys
-        import os
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        if project_root not in sys.path:
-            sys.path.insert(0, project_root)
-        from prepare_dataset.config_schema import DatasetPrepConfig
+    from prepare_dataset.config_schema import DatasetPrepConfig
     return DatasetPrepConfig
-
-def _get_dataset_preparers():
-    # Return a simple dict without actually importing the heavy modules
-    # We don't need the actual classes since we use subprocess for dataset prep
-    return {"Qwen": "QwenDatasetPreparer", "Gemma": "GemmaDatasetPreparer"}
 
 
 # State for running/canceling background jobs
 RUN_STATE = {
-	"proc": None,
+    'proc': None,
 }
 
+PRESETS_DIR = os.path.join('prepare_dataset', 'presets')
+PRESETS_DATA_DIR = os.path.join(PRESETS_DIR, 'data')
+PRESETS_TRAIN_DIR = os.path.join(PRESETS_DIR, 'train')
 
-def _list_cached_datasets(base_dir: str = "data") -> list[str]:
-	out = []
-	if not os.path.isdir(base_dir):
-		return out
-	# collect folders that look like saved datasets (arrow shards or dataset_info.json)
-	for root, dirs, files in os.walk(base_dir):
-		if "dataset_info.json" in files or any(f.endswith(".arrow") for f in files):
-			out.append(root)
-	# latest first by mtime
-	out.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-	return out
+DEFAULT_DATA_PREP_JSON = """{
+  // HuggingFace model identifier or local path - determines tokenizer and chat template
+  "tok_name": "unsloth/Qwen2.5-0.5B-Instruct",
+  
+  // Template for formatting conversations (auto-detected from model, can override)
+  "chat_template": "qwen-2.5",
+  
+  // HuggingFace dataset or local file path
+  "dataset_name": "mlabonne/FineTome-100k",
+  
+  // Dataset split to use (train/validation/test)
+  "split": "train",
+  
+  // Number of samples to process (-1 for all, use small number for testing)
+  "num_samples": 1000,
+  
+  // Number of parallel workers for processing (adjust based on CPU cores)
+  "num_proc": 4,
+  
+  // Only train on assistant responses (highly recommended for chat models)
+  "train_on_target_only": true,
+  
+  // Text that starts user messages (auto-detected from chat template)
+  "instruction_part": "<|im_start|>user\\n",
+  
+  // Text that starts assistant responses (auto-detected from chat template)  
+  "response_part": "<|im_start|>assistant\\n",
+  
+  // Number of samples to preview in logs (0 = disabled, useful for debugging)
+  "debug": 0,
+  
+  // Auto-generated based on model name and date - do not modify
+  "output_dir": null,
+  
+  // Required for accessing gated models/datasets (leave null if not needed)
+  "hf_token": null
+}"""
+
+DEFAULT_TRAINING_JSON = """{
+  // OpenSloth Configuration
+  "opensloth_config": {
+    // Path to processed dataset (auto-filled from Data Preparation tab)
+    "data_cache_path": "data/...",
+    
+    // List of GPU indices to use (e.g. [0] for single GPU, [0,1] for multi-GPU)
+    "devices": [0],
+    
+    // Use sequence packing for faster training (recommended)
+    "sequence_packing": true,
+
+    // Model Configuration
+    "fast_model_args": {
+      // HuggingFace model identifier or local path
+      "model_name": "unsloth/Qwen2.5-0.5B-Instruct",
+      
+      // Maximum input length (higher = more VRAM usage)
+      "max_seq_length": 2048,
+      
+      // Use 4-bit quantization to reduce memory usage (recommended)
+      "load_in_4bit": true,
+      "load_in_8bit": false,
+      
+      // Train all parameters vs LoRA (full_finetuning requires much more VRAM)
+      "full_finetuning": false
+    },
+
+    // LoRA Configuration (ignored if full_finetuning is true)
+    "lora_args": {
+      // LoRA rank (higher = more parameters, more VRAM)
+      "r": 8,
+      "lora_alpha": 16,
+      "lora_dropout": 0.0,
+      
+      // Which layers to apply LoRA to
+      "target_modules": [
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj", "down_proj"
+      ],
+      
+      // Use Rank-stabilized LoRA (experimental)
+      "use_rslora": false
+    }
+  },
+
+  // HuggingFace Trainer Arguments
+  "training_args": {
+    // Where to save the trained model
+    "output_dir": "outputs/exps/test_run",
+    
+    // Batch size per GPU (reduce if you get OOM errors)
+    "per_device_train_batch_size": 1,
+    
+    // Effective batch size = batch_size * num_gpus * accumulation_steps
+    "gradient_accumulation_steps": 4,
+    
+    // Model learning rate (typically 1e-4 to 5e-4 for LoRA)
+    "learning_rate": 0.0001,
+    
+    // Log training progress every N steps
+    "logging_steps": 1,
+    
+    // For quick tests, set max_steps. For full training, use num_train_epochs
+    "max_steps": 50,
+    
+    // Number of complete passes through the dataset  
+    "num_train_epochs": 1,
+    
+    // Learning rate schedule (linear is most common)
+    "lr_scheduler_type": "linear",
+    
+    // Number of warmup steps at the beginning
+    "warmup_steps": 10,
+    
+    // Maximum number of checkpoints to keep (saves disk space)
+    "save_total_limit": 1,
+    
+    // L2 regularization parameter
+    "weight_decay": 0.01,
+    
+    // Optimizer (adamw_8bit is memory efficient)
+    "optim": "adamw_8bit",
+    
+    // Random seed for reproducible results
+    "seed": 3407,
+    
+    // Logging backend: 'none', 'tensorboard', or 'wandb'
+    "report_to": "none"
+  }
+}"""
+
+
+def _list_cached_datasets(base_dir: str = 'data') -> list[str]:
+    out = []
+    if not os.path.isdir(base_dir):
+        return out
+    for root, _, files in os.walk(base_dir):
+        if 'dataset_info.json' in files or any(
+            f.endswith('.arrow') for f in files
+        ):
+            out.append(root)
+    out.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    return out
 
 
 def _safe_kill_running():
-	proc = RUN_STATE.get("proc")
-	if proc and proc.poll() is None:
-		try:
-			proc.send_signal(signal.SIGINT)
-		except Exception:
-			try:
-				proc.terminate()
-			except Exception:
-				pass
-	RUN_STATE["proc"] = None
-
-
-PRESETS_DIR = os.path.join("prepare_dataset", "presets")
-PRESETS_DATA_DIR = os.path.join(PRESETS_DIR, "data")
-PRESETS_TRAIN_DIR = os.path.join(PRESETS_DIR, "train")
+    proc = RUN_STATE.get('proc')
+    if proc and proc.poll() is None:
+        try:
+            proc.send_signal(signal.SIGINT)
+        except Exception:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+    RUN_STATE['proc'] = None
 
 
 def _ensure_preset_dirs():
-	os.makedirs(PRESETS_DATA_DIR, exist_ok=True)
-	os.makedirs(PRESETS_TRAIN_DIR, exist_ok=True)
+    os.makedirs(PRESETS_DATA_DIR, exist_ok=True)
+    os.makedirs(PRESETS_TRAIN_DIR, exist_ok=True)
 
 
 def _list_json_files(dir_path: str) -> list[str]:
-	if not os.path.isdir(dir_path):
-		return []
-	names = [f for f in os.listdir(dir_path) if f.endswith(".json")]
-	names.sort()
-	return names
+    if not os.path.isdir(dir_path):
+        return []
+    names = [f for f in os.listdir(dir_path) if f.endswith('.json')]
+    names.sort()
+    return names
 
 
 def _save_json(path: str, data: dict) -> None:
-	with open(path, "w", encoding="utf-8") as f:
-		json.dump(data, f, ensure_ascii=False, indent=2)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def _load_json(path: str) -> dict:
-	with open(path, "r", encoding="utf-8") as f:
-		return json.load(f)
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
 
 
-MODEL_FAMILIES = None  # Will be loaded lazily
+def _generate_dataset_name(model_name: str, dataset_name: str, num_samples: int) -> str:
+    """Auto-generate dataset directory name based on model and config"""
+    today = datetime.datetime.now().strftime("%m%d")
+    
+    # Extract model family from model name
+    model_family = "unknown"
+    if "qwen" in model_name.lower():
+        model_family = "qwen"
+    elif "gemma" in model_name.lower():
+        model_family = "gemma" 
+    elif "llama" in model_name.lower():
+        model_family = "llama"
+    elif "mistral" in model_name.lower():
+        model_family = "mistral"
+    
+    # Extract dataset name (remove path/organization)
+    dataset_short = dataset_name.split('/')[-1].replace('-', '_').lower()
+    
+    # Format: model-dataset-samples-mmdd
+    name = f"{model_family}_{dataset_short}_n{num_samples}_{today}"
+    return name
 
-def _get_model_families():
-    # Return the model families without loading heavy imports
-    return {"Qwen": "QwenDatasetPreparer", "Gemma": "GemmaDatasetPreparer"}
+
+def dict_to_json(data: dict[str, Any]) -> str:
+    return commentjson.dumps(
+        data, indent=2, ensure_ascii=False
+    )
 
 
-def _default_dataset_prep(model_family: str):
-    DatasetPrepConfig = _get_dataset_prep_config()
-    if model_family == "Qwen":
-        return DatasetPrepConfig(
-            tok_name="unsloth/Qwen3-0.6B-Instruct",
-            chat_template="qwen-3",
-            dataset_name="mlabonne/FineTome-100k",
-            split="train",
-            train_on_target_only=True,
-            instruction_part="<start_of_turn>user\n",
-            response_part="<start_of_turn>assistant\n",
-        )
-    else:  # Gemma
-        return DatasetPrepConfig(
-            tok_name="unsloth/gemma-3-1b-it",
-            chat_template="gemma-3",
-            dataset_name="mlabonne/FineTome-100k",
-            split="train",
-            train_on_target_only=True,
-            instruction_part="<start_of_turn>user\n",
-            response_part="<start_of_turn>model\n",
-        )
+def json_file_to_json_str(path: str) -> str:
+    data = _load_json(path)
+    return dict_to_json(data)
+
+
+def _get_config_choices():
+    presets = []
+    for filename in _list_json_files(PRESETS_DATA_DIR):
+        try:
+            preset_data = _load_json(os.path.join(PRESETS_DATA_DIR, filename))
+            description = preset_data.get('description', '')
+            name = filename.replace('.json', '').replace('_', ' ').title()
+            presets.append(f'{name}: {description}' if description else name)
+        except Exception:
+            presets.append(filename.replace('.json', ''))
+    return presets
+
+
+def _extract_preset_filename(choice_with_desc: str) -> str | None:
+    if not choice_with_desc:
+        return None
+    name_part = choice_with_desc.split(':')[0].strip()
+    filename = name_part.lower().replace(' ', '_') + '.json'
+    return (
+        filename
+        if filename in _list_json_files(PRESETS_DATA_DIR)
+        else None
+    )
 
 
 def _ansi_to_text(s: str) -> str:
-	"""Remove ANSI color codes for clean HTML rendering."""
-	return re.sub(r"\x1b\[[0-9;]*m", "", s)
+    return re.sub(r'\x1b\[[0-9;]*m', '', s)
 
 
 def _to_log_html(text: str, elem_id: str) -> str:
-	escaped = html.escape(_ansi_to_text(text))
-	toolbar = (
-		f"<div class='small' style='display:flex;gap:12px;align-items:center;margin:6px 0;'>"
-		f"<strong>Live logs</strong>"
-		f"<button onclick=\"navigator.clipboard.writeText(document.getElementById('{elem_id}').innerText)\" style='margin-left:auto'>Copy</button>"
-		f"</div>"
-	)
-	return (
-		toolbar
-		+ f"<div id='{elem_id}' class='logbox'>{escaped}</div>"
-		+ f"<script>var el=document.getElementById('{elem_id}'); if(el) el.scrollTop=el.scrollHeight;</script>"
-	)
+    escaped = html.escape(_ansi_to_text(text))
+    toolbar = (
+        '<div class="small" style="display:flex;gap:12px;align-items:center;'
+        'margin:6px 0;">'
+        '<strong>Live logs</strong>'
+        f'<button onclick="navigator.clipboard.writeText('
+        f'document.getElementById(\'{elem_id}\').innerText)" '
+        'style="margin-left:auto">Copy</button>'
+        '</div>'
+    )
+    return (
+        f'{toolbar}<div id="{elem_id}" class="logbox">{escaped}</div>'
+        f'<script>var el=document.getElementById(\'{elem_id}\'); '
+        'if(el) el.scrollTop=el.scrollHeight;</script>'
+    )
 
 
-def run_dataset_prep_gui(
-	model_family: str,
-	tok_name: str,
-	chat_template: str,
-	dataset_name: str,
-	split: str,
-	num_samples: int,
-	num_proc: int,
-	train_on_target_only: bool,
-	instruction_part: str,
-	response_part: str,
-	debug: int,
-	output_dir: str,
-	overrides_json: str,
-):
-	# run prep as a subprocess to stream logs & allow cancel
-	if train_on_target_only and (not instruction_part or not response_part):
-		return (
-			gr.update(),
-			gr.update(
-				value="instruction_part and response_part are required when train_on_target_only is enabled.",
-				visible=True,
-			),
-			gr.update(value=""),
-		)
+def run_dataset_prep_gui(config_json: str):
+    try:
+        cfg = commentjson.loads(config_json)
+    except commentjson.JSONLibraryException as e:
+        error_msg = f'Invalid JSON format: {e}'
+        return gr.update(), gr.update(value=error_msg, visible=True), gr.update()
 
-	cfg: dict = {
-		"model_family": model_family,
-		"tok_name": tok_name,
-		"chat_template": chat_template,
-		"dataset_name": dataset_name,
-		"split": split,
-		"num_samples": num_samples,
-		"num_proc": num_proc,
-		"train_on_target_only": train_on_target_only,
-		"instruction_part": instruction_part,
-		"response_part": response_part,
-		"debug": debug,
-		"output_dir": output_dir or None,
-	}
+    # Auto-generate dataset name and set output directory
+    if not cfg.get('output_dir'):
+        model_name = cfg.get('tok_name', 'unknown')
+        dataset_name = cfg.get('dataset_name', 'unknown')
+        num_samples = cfg.get('num_samples', -1)
+        generated_name = _generate_dataset_name(model_name, dataset_name, num_samples)
+        cfg['output_dir'] = f'data/{generated_name}'
 
-	# Optional JSON overrides
-	if overrides_json and overrides_json.strip():
-		try:
-			overrides = json.loads(overrides_json)
-			if isinstance(overrides, dict):
-				cfg.update(overrides)
-		except Exception:
-			pass
+    if cfg.get('train_on_target_only') and (
+        not cfg.get('instruction_part') or not cfg.get('response_part')
+    ):
+        error_msg = (
+            'instruction_part and response_part are required when '
+            'train_on_target_only is enabled.'
+        )
+        return (
+            gr.update(),
+            gr.update(value=error_msg, visible=True),
+            gr.update(value=''),
+        )
 
-	try:
-		_safe_kill_running()
-		RUN_STATE["proc"] = subprocess.Popen(
-			["python", "prepare_dataset/run_prep_job.py"],
-			stdin=subprocess.PIPE,
-			stdout=subprocess.PIPE,
-			stderr=subprocess.STDOUT,
-			text=True,
-			bufsize=1,
-		)
-		assert RUN_STATE["proc"].stdin is not None
-		RUN_STATE["proc"].stdin.write(json.dumps(cfg))
-		RUN_STATE["proc"].stdin.close()
-		# stream logs to UI
-		out_lines: list[str] = []
-		out_dir = ""
-		for line in RUN_STATE["proc"].stdout:  # type: ignore[arg-type]
-			out_lines.append(line.rstrip("\n"))
-			if line.strip().startswith("[JOB] Completed. Saved at:"):
-				out_dir = line.split(":", 1)[1].strip()
-			# stream with ANSI cleaned + autoscroll
-			log_html = _to_log_html("\n".join(out_lines), elem_id="prep-log")
-			yield (
-				gr.update(value=out_dir),
-				gr.update(value=log_html, visible=True),
-				gr.update(value=""),
-			)
-		code = RUN_STATE["proc"].wait()
-		RUN_STATE["proc"] = None
-		# try load debug HTML if any
-		debug_html_content = ""
-		if debug and os.path.exists(".log/dataloader_examples.html"):
-			try:
-				with open(".log/dataloader_examples.html", "r", encoding="utf-8") as hf:
-					debug_html_content = hf.read()
-			except Exception:
-				pass
-		full_log_html = _to_log_html("\n".join(out_lines), elem_id="prep-log")
-		if code != 0:
-			return gr.update(), gr.update(value=full_log_html, visible=True), gr.update(value=debug_html_content)
-		return out_dir, gr.update(value=full_log_html, visible=True), gr.update(value=debug_html_content)
-	except Exception:
-		_safe_kill_running()
-		return gr.update(), gr.update(value=traceback.format_exc(), visible=True), gr.update(value="")
+    try:
+        _safe_kill_running()
+        proc = subprocess.Popen(
+            ['python', 'prepare_dataset/run_prep_job.py'],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        RUN_STATE['proc'] = proc
+        assert proc.stdin is not None
+        proc.stdin.write(json.dumps(cfg))
+        proc.stdin.close()
+        # Stream logs to UI
+        out_lines: list[str] = []
+        out_dir = ''
+        for line in proc.stdout:
+            out_lines.append(line.rstrip('\n'))
+            if line.strip().startswith('[JOB] Completed. Saved at:'):
+                out_dir = line.split(':', 1)[1].strip()
+            log_html = _to_log_html('\n'.join(out_lines), elem_id='prep-log')
+            yield (
+                gr.update(value=out_dir),
+                gr.update(value=log_html, visible=True),
+                gr.update(value=''),
+            )
+        code = proc.wait()
+        RUN_STATE['proc'] = None
+
+        debug_html_content = ''
+        if cfg.get('debug') and os.path.exists('.log/dataloader_examples.html'):
+            try:
+                with open(
+                    '.log/dataloader_examples.html', 'r', encoding='utf-8'
+                ) as hf:
+                    debug_html_content = hf.read()
+            except Exception:
+                pass
+        full_log_html = _to_log_html('\n'.join(out_lines), elem_id='prep-log')
+        if code != 0:
+            return (
+                gr.update(),
+                gr.update(value=full_log_html, visible=True),
+                gr.update(value=debug_html_content),
+            )
+        
+        # Save configuration to the dataset folder for reference
+        if out_dir and os.path.exists(out_dir):
+            try:
+                config_path = os.path.join(out_dir, 'preparation_config.json')
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    commentjson.dump(cfg, f, indent=2, ensure_ascii=False)
+            except Exception:
+                pass  # Don't fail if we can't save config
+            
+        return (
+            out_dir,
+            gr.update(value=full_log_html, visible=True),
+            gr.update(value=debug_html_content),
+        )
+    except Exception:
+        _safe_kill_running()
+        return (
+            gr.update(),
+            gr.update(value=traceback.format_exc(), visible=True),
+            gr.update(value=''),
+        )
 
 
-def launch_training_gui(
-	data_cache_path: str,
-	devices_csv: str,
-	model_name: str,
-	max_seq_length: int,
-	load_in_4bit: bool,
-	load_in_8bit: bool,
-	full_finetuning: bool,
-	r: int,
-	lora_alpha: int,
-	lora_dropout: float,
-	target_modules_csv: str,
-	use_rslora: bool,
-	output_dir: str,
-	per_device_train_batch_size: int,
-	gradient_accumulation_steps: int,
-	learning_rate: float,
-	logging_steps: int,
-	num_train_epochs: int,
-	lr_scheduler_type: str,
-	warmup_steps: int,
-	save_total_limit: int,
-	weight_decay: float,
-	optim: str,
-	seed: int,
-	report_to: str,
-	sequence_packing: bool,
-):
-	# run training via subprocess to stream logs & allow cancel
-	try:
-		devices = [int(x.strip()) for x in devices_csv.split(",") if x.strip()]
-		target_modules = [x.strip() for x in target_modules_csv.split(",") if x.strip()] or [
-			"q_proj",
-			"k_proj",
-			"v_proj",
-			"o_proj",
-			"gate_proj",
-			"up_proj",
-			"down_proj",
-		]
+def launch_training_gui(config_json: str):
+    try:
+        cfg = commentjson.loads(config_json)
+        data_cache_path = cfg.get('opensloth_config', {}).get('data_cache_path')
+        model_name = (
+            cfg.get('opensloth_config', {})
+            .get('fast_model_args', {})
+            .get('model_name')
+        )
+    except commentjson.JSONLibraryException as e:
+        return gr.update(value=f'❌ Invalid JSON format: {e}', visible=True)
 
-		cfg = {
-			"opensloth_config": {
-				"data_cache_path": data_cache_path,
-				"devices": devices,
-				"fast_model_args": {
-					"model_name": model_name,
-					"max_seq_length": int(max_seq_length),
-					"load_in_4bit": bool(load_in_4bit),
-					"load_in_8bit": bool(load_in_8bit),
-					"full_finetuning": bool(full_finetuning),
-				},
-				"lora_args": {
-					"r": int(r),
-					"lora_alpha": int(lora_alpha),
-					"lora_dropout": float(lora_dropout),
-					"target_modules": target_modules,
-					"use_rslora": bool(use_rslora),
-				},
-				"sequence_packing": bool(sequence_packing),
-			},
-			"training_args": {
-				"output_dir": output_dir,
-				"per_device_train_batch_size": int(per_device_train_batch_size),
-				"gradient_accumulation_steps": int(gradient_accumulation_steps),
-				"learning_rate": float(learning_rate),
-				"logging_steps": int(logging_steps),
-				"num_train_epochs": int(num_train_epochs),
-				"lr_scheduler_type": lr_scheduler_type,
-				"warmup_steps": int(warmup_steps),
-				"save_total_limit": int(save_total_limit),
-				"weight_decay": float(weight_decay),
-				"optim": optim,
-				"seed": int(seed),
-				"report_to": report_to,
-			},
-		}
+    if not data_cache_path or not os.path.exists(data_cache_path):
+        msg = '❌ Error: Dataset path is required and must exist in the YAML.'
+        return gr.update(value=msg, visible=True)
 
-		_safe_kill_running()
-		RUN_STATE["proc"] = subprocess.Popen(
-			["python", "prepare_dataset/run_train_job.py"],
-			stdin=subprocess.PIPE,
-			stdout=subprocess.PIPE,
-			stderr=subprocess.STDOUT,
-			text=True,
-			bufsize=1,
-		)
-		assert RUN_STATE["proc"].stdin is not None
-		RUN_STATE["proc"].stdin.write(json.dumps(cfg))
-		RUN_STATE["proc"].stdin.close()
+    if not model_name:
+        msg = '❌ Error: Model name is required in the YAML config.'
+        return gr.update(value=msg, visible=True)
 
-		out_lines: list[str] = []
-		for line in RUN_STATE["proc"].stdout:  # type: ignore[arg-type]
-			out_lines.append(line.rstrip("\n"))
-			log_html = _to_log_html("\n".join(out_lines), elem_id="train-log")
-			yield gr.update(value=log_html, visible=True)
-		code = RUN_STATE["proc"].wait()
-		RUN_STATE["proc"] = None
-		final_html = _to_log_html("\n".join(out_lines) or ("Exit code: " + str(code)), elem_id="train-log")
-		return gr.update(value=final_html, visible=True)
-	except Exception:
-		_safe_kill_running()
-		return gr.update(value=traceback.format_exc(), visible=True)
+    # Check for tokenizer compatibility warning
+    try:
+        dataset_config_path = os.path.join(data_cache_path, 'dataset_config.json')
+        if os.path.exists(dataset_config_path):
+            with open(dataset_config_path, 'r') as f:
+                dataset_config = json.load(f)
+            dataset_tokenizer = dataset_config.get('tok_name', '')
+            if dataset_tokenizer and dataset_tokenizer != model_name:
+                warning_msg = (
+                    f"⚠️ Warning: Dataset was prepared with tokenizer "
+                    f"'{dataset_tokenizer}' but training with '{model_name}'. "
+                    f"This may cause issues."
+                )
+                yield gr.update(value=warning_msg, visible=True)
+    except Exception:
+        pass  # Continue if we can't check
+
+    try:
+        _safe_kill_running()
+        proc = subprocess.Popen(
+            ['python', 'prepare_dataset/run_train_job.py'],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        RUN_STATE['proc'] = proc
+        assert proc.stdin is not None
+        proc.stdin.write(json.dumps(cfg))
+        proc.stdin.close()
+
+        out_lines: list[str] = []
+        yield gr.update(value='🚀 Starting training process...', visible=True)
+
+        for line in proc.stdout:
+            out_lines.append(line.rstrip('\n'))
+            log_html = _to_log_html('\n'.join(out_lines), elem_id='train-log')
+            yield gr.update(value=log_html, visible=True)
+
+        code = proc.wait()
+        RUN_STATE['proc'] = None
+        final_html = _to_log_html(
+            '\n'.join(out_lines) or ('Exit code: ' + str(code)),
+            elem_id='train-log',
+        )
+        output_dir = cfg.get('training_args', {}).get('output_dir')
+
+        if code == 0:
+            success_msg = (
+                f'✅ Training completed successfully! '
+                f'Model saved to: {output_dir}'
+            )
+            final_html = success_msg + '\n\n' + final_html
+        else:
+            error_msg = f'❌ Training failed with exit code: {code}'
+            final_html = error_msg + '\n\n' + final_html
+
+        return gr.update(value=final_html, visible=True)
+
+    except Exception as e:
+        _safe_kill_running()
+        error_msg = f'❌ Training error: {str(e)}\n\n{traceback.format_exc()}'
+        return gr.update(value=error_msg, visible=True)
 
 
 def build_ui() -> gr.Blocks:
-	with gr.Blocks(title="OpenSloth Studio") as demo:
-		gr.Markdown("""
-		# OpenSloth Studio
-		Prepare chat datasets and fine-tune models with a simple UI.
-		""")
+    _ensure_preset_dirs()
 
-		# Inject styles for log boxes
-		gr.HTML("""
+    with gr.Blocks(title='OpenSloth Studio') as demo:
+        gr.Markdown(
+            """
+		# 🦥 OpenSloth Studio
+		**Simple SFT Workflow:** Choose preset → Edit config → Process data → Train model
+
+		*Optimized for Supervised Fine-Tuning (SFT) with small, efficient models.*
+		"""
+        )
+
+        gr.HTML(
+            """
 		<style>
 		:root { --log-bg: #0b0e14; --log-fg: #f0f3f6; --log-border: #1f2937; }
-		@media (prefers-color-scheme: light) { :root { --log-bg: #f8fafc; --log-fg: #111827; --log-border: #e5e7eb; } }
-		.logbox { height: 340px; overflow-y: auto; background: var(--log-bg); color: var(--log-fg); padding: 10px; border-radius: 8px; border: 1px solid var(--log-border); white-space: pre-wrap; word-break: break-word; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; box-shadow: 0 1px 2px rgba(0,0,0,0.05) inset; }
+		@media (prefers-color-scheme: light) {
+            :root {
+                --log-bg: #f8fafc;
+                --log-fg: #111827;
+                --log-border: #e5e7eb;
+            }
+        }
+		.logbox { height: 340px; overflow-y: auto; background: var(--log-bg);
+        color: var(--log-fg); padding: 10px; border-radius: 8px;
+        border: 1px solid var(--log-border); white-space: pre-wrap;
+        word-break: break-word; font: 12px/1.5 ui-monospace, SFMono-Regular,
+        Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05) inset; }
 		.small { font-size: 12px; color: #6b7280; }
-		button.copy-btn { font-size: 12px; padding: 2px 8px; border: 1px solid var(--log-border); background: transparent; border-radius: 4px; color: var(--log-fg); cursor: pointer; }
-		button.copy-btn:hover { background: rgba(0,0,0,0.04); }
+		.step-header { font-size: 18px; font-weight: 600; color: #1f2937;
+        margin-bottom: 12px; }
+		.step-description { font-size: 14px; color: #6b7280;
+        margin-bottom: 16px; }
 		</style>
-		""")
+		"""
+        )
 
-		# Data Processing Tab
-		with gr.Tab("Data Processing"):
-			with gr.Row():
-				model_family = gr.Dropdown(
-					label="Model Family",
-					choices=list(_get_model_families().keys()),
-					value="Qwen",
-				)
-				ds_preset = gr.Dropdown(
-					label="Starter config",
-					choices=["Qwen default", "Gemma default"] + _list_json_files(PRESETS_DATA_DIR),
-					value="Qwen default",
-				)
-				refresh_datasets_btn = gr.Button("Refresh datasets")
+        with gr.Tab('📊 Data Preparation'):
+            with gr.Group():
+                gr.HTML('<div class="step-header">Step 1: Choose a Config</div>')
+                with gr.Row():
+                    ds_preset = gr.Dropdown(
+                        label='Config Templates',
+                        choices=_get_config_choices(),
+                        value=None,
+                        info='Pre-configured settings for common use cases',
+                    )
+                    load_config_ds = gr.Dropdown(
+                        label='Load Custom Config',
+                        choices=_list_json_files(PRESETS_DATA_DIR),
+                        info='Load a previously saved config',
+                    )
+                    refresh_presets_btn = gr.Button('🔄 Refresh', size='sm')
 
-			# Basic controls for new users
-			with gr.Row():
-				tok_name = gr.Textbox(label="Tokenizer / Model", value="unsloth/Qwen3-0.6B-Instruct")
-				dataset_name = gr.Textbox(
-					label="Dataset (HF repo or local file)",
-					value="mlabonne/FineTome-100k",
-				)
+            with gr.Group():
+                gr.HTML('<div class="step-header">Step 2: Edit Config</div>')
+                data_prep_json = gr.Code(
+                    label='Configuration (JSON with Comments)',
+                    value=DEFAULT_DATA_PREP_JSON.strip(),
+                    language='javascript',  # JavaScript highlighting works well for JSON
+                    
+                    # lines=15,
+                    # max_lines=30,
+                )
 
-			with gr.Row():
-				split = gr.Textbox(label="Split", value="train")
-				num_samples = gr.Number(label="Num Samples (-1 for all)", value=-1, precision=0)
-				debug = gr.Number(label="Debug (dump N samples)", value=0, precision=0)
+            with gr.Group():
+                gr.HTML('<div class="step-header">Step 3: Process Dataset</div>')
+                with gr.Row():
+                    run_prep = gr.Button('🚀 Process', variant='primary', size='lg')
+                    cancel_prep = gr.Button('❌ Cancel', size='sm')
+                    clear_prep = gr.Button('🧹 Clear Logs', size='sm')
 
-			# Advanced options tucked away
-			with gr.Accordion("Advanced options", open=False):
-				with gr.Row():
-					chat_template = gr.Textbox(label="Chat Template", value="qwen-3")
-					num_proc = gr.Number(label="Workers", value=8, precision=0)
-				with gr.Row():
-					train_on_target_only = gr.Checkbox(label="Train on target only", value=True)
-					instruction_part = gr.Textbox(label="Instruction marker", value="<start_of_turn>user\n")
-					response_part = gr.Textbox(label="Response marker", value="<start_of_turn>assistant\n")
+            out_dir_box = gr.Textbox(
+                label='✅ Processed Dataset Path', interactive=False
+            )
+            prep_status = gr.HTML(visible=False)
+            debug_html = gr.HTML(label='📋 Debug Preview', visible=False)
 
-			with gr.Row():
-				output_dir = gr.Textbox(label="Output dir (optional)")
-				run_prep = gr.Button("Prepare Dataset")
-				cancel_prep = gr.Button("Cancel")
-				clear_prep = gr.Button("Clear logs")
+            with gr.Accordion('💾 Save Custom Config', open=False):
+                with gr.Row():
+                    config_name_ds = gr.Textbox(
+                        label='Config Name',
+                        placeholder='my_qwen_config',
+                        info='Save current YAML settings as a reusable config',
+                    )
+                    save_config_ds = gr.Button('💾 Save')
 
-			overrides_ds = gr.Textbox(label="Dataset Prep overrides (JSON)", lines=4, value="")
+            def apply_starter_config(preset_choice: str) -> str:
+                filename = _extract_preset_filename(preset_choice)
+                if not filename:
+                    return DEFAULT_DATA_PREP_JSON.strip()
+                try:
+                    path = os.path.join(PRESETS_DATA_DIR, filename)
+                    DatasetPrepConfig = _get_dataset_prep_config()
+                    cfg = DatasetPrepConfig.model_validate(_load_json(path))
+                    return dict_to_json(cfg.model_dump(exclude_none=True))
+                except Exception:
+                    return DEFAULT_DATA_PREP_JSON.strip()
 
-			out_dir_box = gr.Textbox(label="Prepared dataset path", interactive=False)
-			prep_status = gr.HTML(visible=False)
-			debug_html = gr.HTML(label="Debug preview (HTML)")
+            def save_ds_config(name: str, json_str: str):
+                if not name:
+                    return gr.update(), gr.update()
+                try:
+                    data = commentjson.loads(json_str)
+                    filename = f'{name.strip().replace(" ", "_")}.json'
+                    _save_json(os.path.join(PRESETS_DATA_DIR, filename), data)
+                    config_choices = _list_json_files(PRESETS_DATA_DIR)
+                    starter_choices = _get_config_choices()
+                    return (
+                        gr.update(value='✅ Saved!'),
+                        gr.update(choices=config_choices, value=filename),
+                        gr.update(choices=starter_choices),
+                    )
+                except Exception as e:
+                    return gr.update(value=f'❌ Error: {e}'), gr.update(), gr.update()
 
-			# list cached datasets
-			dataset_list = gr.Dropdown(
-				label="Available prepared datasets",
-				choices=["Auto (match current config)"] + _list_cached_datasets(),
-				value="Auto (match current config)",
-			)
+            def refresh_presets():
+                return gr.update(
+                    choices=_get_config_choices()
+                ), gr.update(choices=_list_json_files(PRESETS_DATA_DIR))
 
-			def _apply_starter_config(preset):
-				# Determine which family to use from the preset choice
-				family = "Qwen"
-				if preset == "Qwen default":
-					family = "Qwen"
-					cfg = _default_dataset_prep("Qwen")
-				elif preset == "Gemma default":
-					family = "Gemma"
-					cfg = _default_dataset_prep("Gemma")
-				else:
-					# This is a JSON preset file
-					try:
-						DatasetPrepConfig = _get_dataset_prep_config()
-						preset_data = _load_json(os.path.join(PRESETS_DATA_DIR, preset))
-						family = preset_data.get("model_family", family)
-						cfg = DatasetPrepConfig(**preset_data)
-					except Exception:
-						# Fallback to Qwen default if preset loading fails
-						family = "Qwen"
-						cfg = _default_dataset_prep("Qwen")
-				return (
-					family,
-					cfg.tok_name,
-					cfg.chat_template,
-					cfg.dataset_name,
-					cfg.split,
-					cfg.num_samples,
-					cfg.num_proc,
-					cfg.debug,
-					cfg.train_on_target_only,
-					cfg.instruction_part,
-					cfg.response_part,
-				)
+            ds_preset.change(
+                apply_starter_config,
+                inputs=[ds_preset],
+                outputs=[data_prep_json],
+            )
+            load_config_ds.change(
+                lambda fname: (
+                    json_file_to_json_str(os.path.join(PRESETS_DATA_DIR, fname))
+                    if fname
+                    else gr.update()
+                ),
+                inputs=[load_config_ds],
+                outputs=[data_prep_json],
+            )
+            run_prep.click(
+                run_dataset_prep_gui,
+                inputs=[data_prep_json],
+                outputs=[out_dir_box, prep_status, debug_html],
+            )
+            save_config_ds.click(
+                save_ds_config,
+                inputs=[config_name_ds, data_prep_json],
+                outputs=[prep_status, load_config_ds, ds_preset],
+            )
+            refresh_presets_btn.click(
+                refresh_presets, outputs=[ds_preset, load_config_ds]
+            )
+            cancel_prep.click(
+                lambda: _safe_kill_running() or gr.update(value='Cancelled.'),
+                outputs=[prep_status],
+            )
+            clear_prep.click(
+                lambda: (gr.update(value='', visible=False), gr.update(value='')),
+                outputs=[prep_status, debug_html],
+            )
 
-			ds_preset.change(
-				_apply_starter_config,
-				inputs=[ds_preset],
-				outputs=[
-					model_family,
-					tok_name,
-					chat_template,
-					dataset_name,
-					split,
-					num_samples,
-					num_proc,
-					debug,
-					train_on_target_only,
-					instruction_part,
-					response_part,
-				],
-			)
+        with gr.Tab('🚀 Training'):
+            with gr.Group():
+                gr.HTML('<div class="step-header">Step 1: Select Resources</div>')
+                with gr.Row():
+                    ds_pick = gr.Dropdown(
+                        label='Select Processed Dataset',
+                        choices=_list_cached_datasets(),
+                        info='Choose a dataset to automatically fill the path',
+                    )
+                    load_preset_tr = gr.Dropdown(
+                        label='Load Training Config',
+                        choices=_list_json_files(PRESETS_TRAIN_DIR),
+                        info='Load a saved training configuration',
+                    )
+                    refresh_train_btn = gr.Button('🔄 Refresh', size='sm')
 
-			run_prep.click(
-				run_dataset_prep_gui,
-				inputs=[
-					model_family,
-					tok_name,
-					chat_template,
-					dataset_name,
-					split,
-					num_samples,
-					num_proc,
-					train_on_target_only,
-					instruction_part,
-					response_part,
-					debug,
-					output_dir,
-					overrides_ds,
-				],
-				outputs=[out_dir_box, prep_status, debug_html],
-			)
+            with gr.Group():
+                gr.HTML('<div class="step-header">Step 2: Edit Config</div>')
+                training_json = gr.Code(
+                    label='Configuration (JSON with Comments)',
+                    value=DEFAULT_TRAINING_JSON.strip(),
+                    language='javascript',  # JavaScript highlighting works well for JSON
+                    # lines=20,
+                    # max_lines=40,
+                )
 
-			def _refresh_ds():
-				lst = _list_cached_datasets()
-				starter_choices = ["Qwen default", "Gemma default"] + _list_json_files(PRESETS_DATA_DIR)
-				return gr.update(choices=lst, value=(lst[0] if lst else None)), gr.update(choices=starter_choices)
+            with gr.Group():
+                gr.HTML('<div class="step-header">Step 3: Start Training</div>')
+                with gr.Row():
+                    train_btn = gr.Button(
+                        '🚀 Start Training', variant='primary', size='lg'
+                    )
+                    cancel_train = gr.Button('❌ Cancel', size='sm')
+                    clear_train = gr.Button('🧹 Clear Logs', size='sm')
 
-			refresh_datasets_btn.click(_refresh_ds, outputs=[dataset_list, ds_preset])
+            train_status = gr.HTML(visible=False)
 
-			def _cancel_job():
-				_safe_kill_running()
-				return gr.update(value="Cancelled.", visible=True)
+            with gr.Accordion('💾 Save Custom Config', open=False):
+                with gr.Row():
+                    preset_name_tr = gr.Textbox(
+                        label='Config Name', placeholder='my_lora_config'
+                    )
+                    save_preset_tr = gr.Button('💾 Save')
 
-			cancel_prep.click(_cancel_job, outputs=[prep_status])
-			clear_prep.click(lambda: gr.update(value="", visible=True), outputs=[prep_status])
+            def update_json_with_path(json_str: str, path: str | None) -> str:
+                if not path:
+                    return gr.update()
+                try:
+                    data = commentjson.loads(json_str)
+                    data['opensloth_config']['data_cache_path'] = path
+                    return dict_to_json(data)
+                except (commentjson.JSONLibraryException, KeyError):
+                    return gr.update()
 
-			# Dataset presets inside Data tab
-			_ensure_preset_dirs()
-			with gr.Row():
-				preset_name_ds = gr.Textbox(label="Preset name (dataset)")
-				save_preset_ds = gr.Button("Save preset")
-				load_preset_ds = gr.Dropdown(label="Load preset", choices=_list_json_files(PRESETS_DATA_DIR))
+            def save_train_config(name: str, json_str: str):
+                if not name:
+                    return gr.update(), gr.update()
+                try:
+                    data = commentjson.loads(json_str)
+                    filename = f'{name.strip().replace(" ", "_")}.json'
+                    _save_json(os.path.join(PRESETS_TRAIN_DIR, filename), data)
+                    choices = _list_json_files(PRESETS_TRAIN_DIR)
+                    return (
+                        gr.update(value='✅ Saved!'),
+                        gr.update(choices=choices, value=filename),
+                    )
+                except Exception as e:
+                    return gr.update(value=f'❌ Error: {e}'), gr.update()
 
-			def _collect_ds_cfg(*vals):
-				(
-					model_family_v,
-					tok_name_v,
-					chat_template_v,
-					dataset_name_v,
-					split_v,
-					num_samples_v,
-					num_proc_v,
-					train_on_target_only_v,
-					instruction_part_v,
-					response_part_v,
-					debug_v,
-					output_dir_v,
-				) = vals
-				return {
-					"model_family": model_family_v,
-					"tok_name": tok_name_v,
-					"chat_template": chat_template_v,
-					"dataset_name": dataset_name_v,
-					"split": split_v,
-					"num_samples": num_samples_v,
-					"num_proc": num_proc_v,
-					"train_on_target_only": train_on_target_only_v,
-					"instruction_part": instruction_part_v,
-					"response_part": response_part_v,
-					"debug": debug_v,
-					"output_dir": output_dir_v,
-				}
+            def refresh_training_resources():
+                return gr.update(
+                    choices=_list_cached_datasets()
+                ), gr.update(choices=_list_json_files(PRESETS_TRAIN_DIR))
 
-			def _save_ds_preset(name, *vals):
-				if not name:
-					return gr.update(), gr.update(choices=_list_json_files(PRESETS_DATA_DIR)), gr.update()
-				data = _collect_ds_cfg(*vals)
-				_ensure_preset_dirs()
-				_save_json(os.path.join(PRESETS_DATA_DIR, f"{name}.json"), data)
-				preset_choices = _list_json_files(PRESETS_DATA_DIR)
-				starter_choices = ["Qwen default", "Gemma default"] + preset_choices
-				return (
-					gr.update(value="Saved preset."), 
-					gr.update(choices=preset_choices),
-					gr.update(choices=starter_choices)
-				)
+            train_btn.click(
+                launch_training_gui, inputs=[training_json], outputs=[train_status]
+            )
+            ds_pick.change(
+                update_json_with_path,
+                inputs=[training_json, ds_pick],
+                outputs=[training_json],
+            )
+            load_preset_tr.change(
+                lambda fname: (
+                    json_file_to_json_str(os.path.join(PRESETS_TRAIN_DIR, fname))
+                    if fname
+                    else gr.update()
+                ),
+                inputs=[load_preset_tr],
+                outputs=[training_json],
+            )
+            save_preset_tr.click(
+                save_train_config,
+                inputs=[preset_name_tr, training_json],
+                outputs=[train_status, load_preset_tr],
+            )
+            refresh_train_btn.click(
+                refresh_training_resources, outputs=[ds_pick, load_preset_tr]
+            )
+            cancel_train.click(
+                lambda: _safe_kill_running()
+                or gr.update(value='Cancelled.', visible=True),
+                outputs=[train_status],
+            )
+            clear_train.click(
+                lambda: gr.update(value='', visible=False), outputs=[train_status]
+            )
 
-			def _apply_preset_file(fname):
-				if not fname:
-					return [gr.update() for _ in range(12)]
-				try:
-					DatasetPrepConfig = _get_dataset_prep_config()
-					path = os.path.join(PRESETS_DATA_DIR, fname)
-					preset_data = _load_json(path)
-					cfg = DatasetPrepConfig(**preset_data)
-					return [
-						preset_data.get("model_family", "Qwen"),
-						cfg.tok_name,
-						cfg.chat_template,
-						cfg.dataset_name,
-						cfg.split,
-						cfg.num_samples,
-						cfg.num_proc,
-						cfg.train_on_target_only,
-						cfg.instruction_part,
-						cfg.response_part,
-						cfg.debug,
-						cfg.output_dir or "",
-					]
-				except Exception as e:
-					print(f"Error loading preset {fname}: {e}")
-					return [gr.update() for _ in range(12)]
-
-			save_preset_ds.click(
-				_save_ds_preset,
-				inputs=[
-					preset_name_ds,
-					model_family,
-					tok_name,
-					chat_template,
-					dataset_name,
-					split,
-					num_samples,
-					num_proc,
-					train_on_target_only,
-					instruction_part,
-					response_part,
-					debug,
-					output_dir,
-				],
-				outputs=[prep_status, load_preset_ds, ds_preset],
-			)
-
-			load_preset_ds.change(
-				_apply_preset_file,
-				inputs=[load_preset_ds],
-				outputs=[
-					model_family,
-					tok_name,
-					chat_template,
-					dataset_name,
-					split,
-					num_samples,
-					num_proc,
-					train_on_target_only,
-					instruction_part,
-					response_part,
-					debug,
-					output_dir,
-				],
-			)
-
-		# Training Tab
-		with gr.Tab("Training"):
-			gr.Markdown("Quick config for training; advanced options are tucked away.")
-			# Tip to avoid hot-reload issues if running with `gradio` CLI
-			if not os.getenv("GRADIO_WATCH_DIRS"):
-				gr.Markdown(
-					"""
-					Note: for stable reloads when using the `gradio` CLI, restrict watch dirs to this folder to avoid reloads from model caches:
-					
-					- export GRADIO_WATCH_DIRS="$(pwd)/prepare_dataset"
-					
-					Otherwise, changes in other folders (e.g. unsloth_compiled_cache) may trigger reload during long jobs.
-					"""
-				)
-			# Basics first
-			with gr.Row():
-				data_cache_path = gr.Textbox(label="Dataset path", value="")
-				ds_pick = gr.Dropdown(label="Pick prepared dataset", choices=_list_cached_datasets(), value=None)
-				devices_csv = gr.Textbox(label="CUDA devices", value="0,1")
-				sequence_packing = gr.Checkbox(label="Sequence packing", value=True)
-
-			with gr.Row():
-				model_name = gr.Textbox(label="Model name/path", value="unsloth/gemma-3-1b-it-unsloth-bnb-4bit")
-				per_device_train_batch_size = gr.Number(label="Per-device batch size", value=2, precision=0)
-				num_train_epochs = gr.Number(label="Num epochs", value=1, precision=0)
-				learning_rate = gr.Number(label="Learning rate", value=1e-5)
-				output_dir = gr.Textbox(label="Output dir", value="outputs/exps/exp1")
-
-			# Advanced training
-			with gr.Accordion("Advanced training options", open=False):
-				with gr.Row():
-					max_seq_length = gr.Number(label="Max seq length", value=16000, precision=0)
-					load_in_4bit = gr.Checkbox(label="Load in 4-bit", value=True)
-					load_in_8bit = gr.Checkbox(label="Load in 8-bit", value=False)
-					full_finetuning = gr.Checkbox(label="Full finetuning", value=False)
-				with gr.Row():
-					r = gr.Number(label="LoRA r", value=8, precision=0)
-					lora_alpha = gr.Number(label="LoRA alpha", value=16, precision=0)
-					lora_dropout = gr.Number(label="LoRA dropout", value=0.0)
-					target_modules_csv = gr.Textbox(
-						label="LoRA target modules (comma)",
-						value="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
-					)
-					use_rslora = gr.Checkbox(label="Use rslora", value=False)
-				with gr.Row():
-					gradient_accumulation_steps = gr.Number(label="Grad accumulation", value=16, precision=0)
-					logging_steps = gr.Number(label="Logging steps", value=1, precision=0)
-					lr_scheduler_type = gr.Textbox(label="LR scheduler", value="linear")
-					warmup_steps = gr.Number(label="Warmup steps", value=5, precision=0)
-					save_total_limit = gr.Number(label="Save total limit", value=1, precision=0)
-					weight_decay = gr.Number(label="Weight decay", value=0.01)
-					optim = gr.Textbox(label="Optimizer", value="adamw_8bit")
-					seed = gr.Number(label="Seed", value=3407, precision=0)
-					report_to = gr.Dropdown(label="Report to", choices=["none", "tensorboard", "wandb"], value="none")
-
-			train_btn = gr.Button("Run Training")
-			cancel_train = gr.Button("Cancel")
-			clear_train = gr.Button("Clear logs")
-			train_status = gr.HTML(visible=False)
-
-			# Presets for training (auto apply)
-			_ensure_preset_dirs()
-			with gr.Row():
-				preset_name_tr = gr.Textbox(label="Preset name (training)")
-				save_preset_tr = gr.Button("Save preset")
-				load_preset_tr = gr.Dropdown(label="Load preset", choices=_list_json_files(PRESETS_TRAIN_DIR))
-
-			train_btn.click(
-				launch_training_gui,
-				inputs=[
-					data_cache_path,
-					devices_csv,
-					model_name,
-					max_seq_length,
-					load_in_4bit,
-					load_in_8bit,
-					full_finetuning,
-					r,
-					lora_alpha,
-					lora_dropout,
-					target_modules_csv,
-					use_rslora,
-					output_dir,
-					per_device_train_batch_size,
-					gradient_accumulation_steps,
-					learning_rate,
-					logging_steps,
-					num_train_epochs,
-					lr_scheduler_type,
-					warmup_steps,
-					save_total_limit,
-					weight_decay,
-					optim,
-					seed,
-					report_to,
-					sequence_packing,
-				],
-				outputs=[train_status],
-			)
-
-			ds_pick.change(lambda v: gr.update(value=v or ""), inputs=[ds_pick], outputs=[data_cache_path])
-			cancel_train.click(lambda: _cancel_job(), outputs=[train_status])
-			clear_train.click(lambda: gr.update(value="", visible=True), outputs=[train_status])
-
-			# Save/load training presets
-			def _collect_train_cfg(
-				data_cache_path, devices_csv, model_name, max_seq_length, load_in_4bit, load_in_8bit, full_finetuning,
-				r, lora_alpha, lora_dropout, target_modules_csv, use_rslora, output_dir,
-				per_device_train_batch_size, gradient_accumulation_steps, learning_rate, logging_steps,
-				num_train_epochs, lr_scheduler_type, warmup_steps, save_total_limit, weight_decay, optim, seed, report_to,
-				sequence_packing,
-			):
-				return {
-					"data_cache_path": data_cache_path,
-					"devices_csv": devices_csv,
-					"model_name": model_name,
-					"max_seq_length": max_seq_length,
-					"load_in_4bit": load_in_4bit,
-					"load_in_8bit": load_in_8bit,
-					"full_finetuning": full_finetuning,
-					"r": r,
-					"lora_alpha": lora_alpha,
-					"lora_dropout": lora_dropout,
-					"target_modules_csv": target_modules_csv,
-					"use_rslora": use_rslora,
-					"output_dir": output_dir,
-					"per_device_train_batch_size": per_device_train_batch_size,
-					"gradient_accumulation_steps": gradient_accumulation_steps,
-					"learning_rate": learning_rate,
-					"logging_steps": logging_steps,
-					"num_train_epochs": num_train_epochs,
-					"lr_scheduler_type": lr_scheduler_type,
-					"warmup_steps": warmup_steps,
-					"save_total_limit": save_total_limit,
-					"weight_decay": weight_decay,
-					"optim": optim,
-					"seed": seed,
-					"report_to": report_to,
-					"sequence_packing": sequence_packing,
-				}
-
-			def _save_train_preset(name, *vals):
-				if not name:
-					return gr.update(), gr.update(choices=_list_json_files(PRESETS_TRAIN_DIR))
-				data = _collect_train_cfg(*vals)
-				_ensure_preset_dirs()
-				_save_json(os.path.join(PRESETS_TRAIN_DIR, f"{name}.json"), data)
-				return gr.update(value="Saved preset."), gr.update(choices=_list_json_files(PRESETS_TRAIN_DIR))
-
-			def _apply_train_preset(fname):
-				if not fname:
-					return [gr.update() for _ in range(26)]
-				path = os.path.join(PRESETS_TRAIN_DIR, fname)
-				cfg = _load_json(path)
-				# Return values in the exact order of outputs specified in load_preset_tr.change
-				return [
-					cfg.get("data_cache_path", ""),                               # data_cache_path
-					cfg.get("devices_csv", "0,1"),                                 # devices_csv
-					cfg.get("model_name", ""),                                    # model_name
-					cfg.get("per_device_train_batch_size", 2),                      # per_device_train_batch_size
-					cfg.get("learning_rate", 1e-5),                                 # learning_rate
-					cfg.get("num_train_epochs", 1),                                 # num_train_epochs
-					cfg.get("sequence_packing", True),                              # sequence_packing
-					cfg.get("output_dir", "outputs/exps/exp1"),                    # output_dir
-					cfg.get("max_seq_length", 16000),                               # max_seq_length
-					cfg.get("load_in_4bit", True),                                  # load_in_4bit
-					cfg.get("load_in_8bit", False),                                 # load_in_8bit
-					cfg.get("full_finetuning", False),                              # full_finetuning
-					cfg.get("r", 8),                                                # r
-					cfg.get("lora_alpha", 16),                                      # lora_alpha
-					cfg.get("lora_dropout", 0.0),                                   # lora_dropout
-					cfg.get("target_modules_csv", "q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj"),  # target_modules_csv
-					cfg.get("use_rslora", False),                                   # use_rslora
-					cfg.get("gradient_accumulation_steps", 16),                      # gradient_accumulation_steps
-					cfg.get("logging_steps", 1),                                    # logging_steps
-					cfg.get("lr_scheduler_type", "linear"),                         # lr_scheduler_type
-					cfg.get("warmup_steps", 5),                                     # warmup_steps
-					cfg.get("save_total_limit", 1),                                 # save_total_limit
-					cfg.get("weight_decay", 0.01),                                  # weight_decay
-					cfg.get("optim", "adamw_8bit"),                                # optim
-					cfg.get("seed", 3407),                                          # seed
-					cfg.get("report_to", "none"),                                  # report_to
-				]
-
-			save_preset_tr.click(
-				_save_train_preset,
-				inputs=[
-					preset_name_tr,
-					data_cache_path,
-					devices_csv,
-					model_name,
-					max_seq_length,
-					load_in_4bit,
-					load_in_8bit,
-					full_finetuning,
-					r,
-					lora_alpha,
-					lora_dropout,
-					target_modules_csv,
-					use_rslora,
-					output_dir,
-					per_device_train_batch_size,
-					gradient_accumulation_steps,
-					learning_rate,
-					logging_steps,
-					num_train_epochs,
-					lr_scheduler_type,
-					warmup_steps,
-					save_total_limit,
-					weight_decay,
-					optim,
-					seed,
-					report_to,
-					sequence_packing,
-				],
-				outputs=[train_status, load_preset_tr],
-			)
-
-			load_preset_tr.change(
-				_apply_train_preset,
-				inputs=[load_preset_tr],
-				outputs=[
-					data_cache_path,
-					devices_csv,
-					model_name,
-					per_device_train_batch_size,
-					learning_rate,
-					num_train_epochs,
-					sequence_packing,
-					output_dir,
-					max_seq_length,
-					load_in_4bit,
-					load_in_8bit,
-					full_finetuning,
-					r,
-					lora_alpha,
-					lora_dropout,
-					target_modules_csv,
-					use_rslora,
-					gradient_accumulation_steps,
-					logging_steps,
-					lr_scheduler_type,
-					warmup_steps,
-					save_total_limit,
-					weight_decay,
-					optim,
-					seed,
-					report_to,
-				],
-			)
-
-	return demo
+    return demo
 
 
+# Build the demo at module level so Gradio can find it
 demo = build_ui()
 
-if __name__ == "__main__":
-	import os
-	os.environ["no_proxy"] = "localhost, 127.0.0.1"
-	demo.launch(theme=gr.themes.Monochrome())
+if __name__ == '__main__':
+    # Set no_proxy for local development if needed
+    os.environ['no_proxy'] = 'localhost,127.0.0.1'
+    demo.launch()

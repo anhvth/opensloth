@@ -40,5 +40,8 @@ class DatasetPrepConfig(BaseModel):
 	# Debug
 	debug: int = Field(default=0, description="If >0, enable debug mode and dump samples")
 
+	# Authentication
+	hf_token: Optional[str] = Field(default=None, description="Hugging Face token for accessing gated models/datasets")
+
 	class Config:
 		extra = "allow"
