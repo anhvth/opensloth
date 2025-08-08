@@ -16,29 +16,29 @@ opensloth_config = OpenSlothConfig(
     data_cache_path="qwen_dataset/0808-dataset/",
     devices=DEVICES,
     fast_model_args=FastModelArgs(
-        model_name="/data/hf-models/Qwen/Qwen3-30B-A3B-Instruct-2507-FP8",
+        model_name="/data/hf-models/Qwen/Qwen3-30B-A3B-Instruct-2507-FP8/",
         # model_name='/data/hf-models/unsloth/Qwen3-0.6B-unsloth-bnb-4bit/',
         max_seq_length=16000,
-        load_in_8bit = False,
-        load_in_4bit=True,
-        full_finetuning=False
+        load_in_8bit = True,
+        load_in_4bit=False,
+        full_finetuning=True
     ),
-    lora_args=LoraArgs(
-        r=128,
-        lora_alpha=256,
-        target_modules=[
-            "q_proj",
-            "k_proj",
-            "v_proj",
-            "o_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
-        ],
-        lora_dropout=0,
-        bias="none",
-        use_rslora=False,
-    ),
+    # lora_args=LoraArgs(
+    #     r=16,
+    #     lora_alpha=32,
+    #     target_modules=[
+    #         "q_proj",
+    #         "k_proj",
+    #         "v_proj",
+    #         "o_proj",
+    #         "gate_proj",
+    #         "up_proj",
+    #         "down_proj",
+    #     ],
+    #     lora_dropout=0,
+    #     bias="none",
+    #     use_rslora=False,
+    # ),
     sequence_packing=True,
 )
 

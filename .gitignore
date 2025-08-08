@@ -67,3 +67,6 @@ _unsloth_sentencepiece_temp
 outputdir/
 .specstory
 qwen_dataset
+*instructions.md
+tmp-Qwen-14B-250808/
+hf-models
