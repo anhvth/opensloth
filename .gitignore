@@ -66,3 +66,4 @@ mutagen.yml
 _unsloth_sentencepiece_temp
 outputdir/
 .specstory
+qwen_dataset

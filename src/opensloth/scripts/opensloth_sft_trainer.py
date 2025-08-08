@@ -72,7 +72,12 @@ def train_on_single_gpu(
 
     logger.start_timing("actual_training")
     logger.debug(f"Environment: {os.environ}")
-    trainer.train()
+    # Patch: Only resume from checkpoint if a valid path is provided
+    resume_from_checkpoint = getattr(hf_train_args, 'resume_from_checkpoint', None)
+    if resume_from_checkpoint:
+        trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+    else:
+        trainer.train()
     logger.finish_timing("actual_training")
 
     # Save once from rank=0

@@ -2,6 +2,7 @@ from typing import List
 from transformers import AutoTokenizer
 from speedy_utils import *
 import datasets
+import warnings
 
 def train_on_target_text_only(
     ids: List[int],
@@ -40,6 +41,7 @@ def train_on_target_text_only(
     labels = [-100] * len(ids)          # start fully masked
     pos = 0
 
+    found_any = False
     while pos < len(ids):
         # --- find the next assistant marker -------------------------------
         try:
@@ -66,10 +68,15 @@ def train_on_target_text_only(
             span_end = len(ids)
 
         # --- copy answer tokens into labels -------------------------------
-        labels[span_start : span_end] = ids[span_start : span_end]
+        if span_end > span_start:
+            found_any = True
+            labels[span_start : span_end] = ids[span_start : span_end]
 
         # continue search after this span
         pos = span_end
+
+    if not found_any:
+        warnings.warn("No assistant response found to train on in this sequence.")
 
     return labels
     

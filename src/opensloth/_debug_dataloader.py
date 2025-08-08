@@ -162,4 +162,49 @@ def debug_chat_dataloader_for_training(dataloader, tokenizer, n_example=10):
     print(f"More training debug examples written to {html_path}")
 
 
-__all__ = ["debug_chat_dataloader_for_training"]
+def debug_chat_dataloader_for_training_markdown(dataloader, tokenizer, n_example=10):
+    """
+    Debug function to log samples from the training dataloader as plain color-coded text (green for trainable, default for context).
+    Prints to terminal and writes to a .log/today_{datetime}.log file. No markdown, no code blocks.
+    """
+    import os
+    from datetime import datetime
+    g = iter(dataloader)
+    now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_path = f".log/today_{now}.log"
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+
+    GREEN = "\033[92m"
+    RESET = "\033[0m"
+
+    lines = []
+    for i in range(n_example):
+        batch = next(g)
+        input_ids = batch["input_ids"][0]
+        label_ids = batch["labels"][0]
+        parts_mask = label_ids >= 0  # True is trainable, False is context
+        split_points = _get_split_points(parts_mask)
+
+        example_lines = [f"=== Example {i+1} ==="]
+        for a, b in zip(split_points[:-1], split_points[1:]):
+            decode_token = input_ids[a:b]
+            text = tokenizer.decode(decode_token, skip_special_tokens=False)
+            is_trainable = parts_mask[a]
+            if is_trainable:
+                colored = f"{GREEN}{text}{RESET}"
+            else:
+                colored = text
+            example_lines.append(colored)
+        example_lines.append("")
+        lines.extend(example_lines)
+
+    # Print to terminal
+    print("\n".join(lines))
+    # Write to log file (with color codes)
+    with open(log_path, "w") as f:
+        f.write("\n".join(lines))
+    print(f"Training debug examples written to {log_path}")
+
+
+
+__all__ = ["debug_chat_dataloader_for_training", "debug_chat_dataloader_for_training_markdown"]

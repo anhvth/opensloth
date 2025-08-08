@@ -20,16 +20,16 @@ class ShuffleData(TrainerCallback):
         logger = get_opensloth_logger(allow_unknown_gpu=True)
         logger.info(f"🔄 Starting epoch {state.epoch + 1}")
 
-        try:
-            from .._debug_dataloader import debug_chat_dataloader_for_training
+        # try:
+        #     from .._debug_dataloader import debug_chat_dataloader_for_training
 
-            tok = kwargs["processing_class"]
-            debug_chat_dataloader_for_training(train_dataloader, tokenizer=tok)
-            logger.info(
-                "📋 Dataloader examples logged to " ".log/dataloader_examples.html"
-            )
-        except Exception as e:
-            logger.debug(f"Dataloader debugging failed (non-critical): {e}")
+        #     tok = kwargs["processing_class"]
+        #     debug_chat_dataloader_for_training(train_dataloader, tokenizer=tok)
+        #     logger.info(
+        #         "📋 Dataloader examples logged to " ".log/dataloader_examples.html"
+        #     )
+        # except Exception as e:
+        #     logger.debug(f"Dataloader debugging failed (non-critical): {e}")
 
 
 class RandomSamplerSeededByEpoch(SequentialSampler):
