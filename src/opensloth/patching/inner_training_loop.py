@@ -126,7 +126,7 @@ def patch_inner_training_loop(trainer, sequence_packing):
         self.state = TrainerState(
             stateful_callbacks=[
                 cb
-                for cb in self.callback_handler.callbacks + [self.control]
+                for cb in [*self.callback_handler.callbacks, self.control]
                 if isinstance(cb, ExportableState)
             ]
         )
@@ -147,7 +147,7 @@ def patch_inner_training_loop(trainer, sequence_packing):
         # as the model is wrapped, don't use `accelerator.prepare`
         # this is for unhandled cases such as
         # FSDP-XLA, SageMaker MP/DP, DataParallel, IPEX
-        use_accelerator_prepare = True if model is self.model else False
+        use_accelerator_prepare = model is self.model
         assert use_accelerator_prepare
 
         if use_accelerator_prepare and self.is_fsdp_enabled:
@@ -442,11 +442,10 @@ def patch_inner_training_loop(trainer, sequence_packing):
                             self.control = self.callback_handler.on_step_begin(
                                 args, self.state, self.control
                             )
-                    else:
-                        if step % args.gradient_accumulation_steps == 0:
-                            self.control = self.callback_handler.on_step_begin(
-                                args, self.state, self.control
-                            )
+                    elif step % args.gradient_accumulation_steps == 0:
+                        self.control = self.callback_handler.on_step_begin(
+                            args, self.state, self.control
+                        )
 
                     # We explicitly want to avoid relying on `accelerator.accumulate` for generation training
                     context = (

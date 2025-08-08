@@ -1,20 +1,23 @@
-from unsloth import FastLanguageModel
-import torch
-from datasets import load_dataset
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['TORCHDYNAMO_DISABLE'] = '1'
+#====
+import unsloth # unsloth must be import before trl
 import pandas as pd
-from unsloth.chat_templates import standardize_sharegpt
-from trl import SFTTrainer, SFTConfig
-
-model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name = "hf-models/unsloth/Qwen3-30B-A3B/",
+from datasets import load_dataset, Dataset
+from trl import SFTConfig, SFTTrainer
+from unsloth import FastModel
+print("Unsloth version:", unsloth.__version__)
+model, tokenizer = FastModel.from_pretrained(
+    model_name = "hf-models/unsloth/Qwen3-0.6B-bnb-4bit/",
     max_seq_length = 2048,
     load_in_4bit = True,
     load_in_8bit = False,
     full_finetuning = False,
-    device_map="auto,"
+    device_map="auto"
 )
 
-model = FastLanguageModel.get_peft_model(
+model = FastModel.get_peft_model(
     model,
     r = 32,
     target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
@@ -34,7 +37,7 @@ def generate_conversation(examples):
     problems  = examples["problem"]
     solutions = examples["generated_solution"]
     conversations = []
-    for problem, solution in zip(problems, solutions):
+    for problem, solution in zip(problems, solutions, strict=False):
         conversations.append([
             {"role" : "user",      "content" : problem},
             {"role" : "assistant", "content" : solution},
@@ -48,15 +51,16 @@ reasoning_conversations = tokenizer.apply_chat_template(
 )
 
 data = pd.Series(reasoning_conversations)
+
 data.name = "text"
 
-from datasets import Dataset
 combined_dataset = Dataset.from_pandas(pd.DataFrame(data))
 combined_dataset = combined_dataset.shuffle(seed = 3407)
+tokenizer.eos_token = "<|im_end|>"
 
 trainer = SFTTrainer(
     model = model,
-    tokenizer = tokenizer,
+    processing_class = tokenizer,
     train_dataset = combined_dataset,
     eval_dataset = None,
     args = SFTConfig(

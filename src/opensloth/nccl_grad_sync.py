@@ -1,5 +1,4 @@
 def get_callback_and_setup_method():
-    from typing import List
 
     import torch
     import torch.distributed as dist
@@ -16,7 +15,7 @@ def get_callback_and_setup_method():
             self,
             model,
             gpu: int,
-            gpus: List[int],
+            gpus: list[int],
         ):
             self.model = model
             self.gpu = gpu
@@ -40,7 +39,7 @@ def get_callback_and_setup_method():
                 dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)
                 param.grad.div_(self.world_size)
 
-        def on_pre_optimizer_step(self, args, state, control, **kwargs) -> None:
+    def on_pre_optimizer_step(self, *_, **__):
             """Called before optimizer step - synchronize gradients."""
             # Synchronize gradients across all ranks
             self._sync_gradients(self.model)

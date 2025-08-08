@@ -1,20 +1,20 @@
+
 import torch
-from typing import Dict, Tuple
-from safetensors.torch import load_file
 from loguru import logger
+from safetensors.torch import load_file
 
 
 def ensure_close_weight(
-    dict1: Dict[str, torch.Tensor], dict2: Dict[str, torch.Tensor]
+    dict1: dict[str, torch.Tensor], dict2: dict[str, torch.Tensor]
 ) -> None:
     """Ensure that the weights in two dictionaries are close within a tolerance."""
-    for key in dict1.keys():
+    for key in dict1:
         assert torch.allclose(dict1[key], dict2[key], atol=1e-6)
-        distance = torch.dist(dict1[key], dict2[key]) # type: ignore
+        torch.dist(dict1[key], dict2[key]) # type: ignore
 
 
 def compare_weights(
-    output_dir: str, gpu_ids: Tuple[int, ...], steps: Tuple[int, ...]
+    output_dir: str, gpu_ids: tuple[int, ...], steps: tuple[int, ...]
 ) -> None:
     """Compare weights from different checkpoints in the specified output directory."""
     for step in steps:

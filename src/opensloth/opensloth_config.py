@@ -1,5 +1,5 @@
 from multiprocessing import cpu_count
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -25,7 +25,7 @@ class FastModelArgs(BaseModel):
         extra = "allow"
 
 
-def _default_target_modules() -> List[str]:
+def _default_target_modules() -> list[str]:
     """Default target modules for LoRA application."""
     return [
         "q_proj",
@@ -50,7 +50,7 @@ class LoraArgs(BaseModel):
     lora_dropout: float = 0.0
     bias: str = "none"
     random_state: int = 3407
-    target_modules: List[str] = Field(
+    target_modules: list[str] = Field(
         default_factory=_default_target_modules,
         description="List of target modules for LoRA application",
     )
@@ -68,10 +68,10 @@ class OpenSlothConfig(BaseModel):
     data_cache_path: str = Field(
         description="Path to cache directory for datasets",
     )
-    devices: List[int] = Field(default=[0], description="List of GPU indices to use")
+    devices: list[int] = Field(default=[0], description="List of GPU indices to use")
     fast_model_args: FastModelArgs = Field(default_factory=FastModelArgs)
-    lora_args: Optional[LoraArgs] = Field(default_factory=LoraArgs)
-    pretrained_lora: Optional[str] = Field(
+    lora_args: LoraArgs | None = Field(default_factory=LoraArgs)
+    pretrained_lora: str | None = Field(
         default=None,
         description="Path to pretrained LoRA model for continous lora training",
     )
@@ -118,7 +118,7 @@ class TrainingArguments(BaseModel):
     optim: str = "adamw_8bit"
     weight_decay: float = 0.01
     save_only_model: bool = False
-    resume_from_checkpoint: Optional[str] = None
+    resume_from_checkpoint: str | None = None
 
     seed: int = 42
     report_to: Literal["tensorboard", "wandb", "none"] = "tensorboard"
@@ -130,6 +130,6 @@ class TrainingArguments(BaseModel):
 
         extra = "allow"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for TrainingArguments initialization."""
         return self.model_dump()

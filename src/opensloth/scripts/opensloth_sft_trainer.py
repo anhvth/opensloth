@@ -58,9 +58,9 @@ def train_on_single_gpu(
     if len(opensloth_config.devices) > 1:
         from opensloth.nccl_grad_sync import get_callback_and_setup_method
 
-        NCCLGradSyncCallback, setup_nccl_for_opensloth = get_callback_and_setup_method()
+        nccl_grad_sync_callback, setup_nccl_for_opensloth = get_callback_and_setup_method()
 
-        grad_sync_cb = NCCLGradSyncCallback(
+        grad_sync_cb = nccl_grad_sync_callback(
             model=trainer.model,
             gpu=gpu,
             gpus=opensloth_config.devices,
@@ -132,7 +132,6 @@ def load_config_from_path(
 def build_tmux_script(
     session_name: str,
     script_path: str,
-    output_dir: str,
     config_file: str,
     gpus: list,
     auto_kill: bool = False,
@@ -214,7 +213,6 @@ def run_tmux_training(
     build_tmux_script(
         session_name,
         script_path,
-        training_config.output_dir,
         config_file,
         gpus,
         auto_kill=auto_kill,
@@ -318,9 +316,9 @@ def setup_envs(opensloth_config: OpenSlothConfig, training_config: TrainingArgum
 @call_parse
 def train(
     config_file: str,
-    rank: int = None,
-    world_size: int = None,
-    tmux: str = None,
+    rank: int | None = None,
+    world_size: int | None = None,
+    tmux: str | None = None,
     y: bool = False,
 ):
     opensloth_config, training_config = initialize_training_config(config_file)

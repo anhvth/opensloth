@@ -1,9 +1,7 @@
 import os
 import random
-from typing import Iterator
+from collections.abc import Iterator
 
-from datasets import Dataset, IterableDataset
-from fastcore.all import patch
 from torch.utils.data.sampler import SequentialSampler
 from transformers import Trainer, TrainerCallback
 
@@ -11,7 +9,7 @@ from opensloth.logging_config import get_opensloth_logger
 
 
 class ShuffleData(TrainerCallback):
-    def on_epoch_begin(self, args, state, control, train_dataloader, **kwargs):
+    def on_epoch_begin(self, state):
         local_rank = int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0"))
 
         if local_rank != 0:
@@ -46,8 +44,8 @@ class RandomSamplerSeededByEpoch(SequentialSampler):
         ids = list(range(dataset_size))
 
         # Shuffle with epoch-specific seed
-        R = random.Random(42 + self.epoch)
-        R.shuffle(ids)
+        r = random.Random(42 + self.epoch)
+        r.shuffle(ids)
 
         self.logger.info(
             f"🎲 Sampler epoch {self.epoch}: emitting {dataset_size} indices\nFirst ids dataset samples: {ids[:10]}\n...Last ids: {ids[-10:]}"
@@ -65,7 +63,6 @@ class RandomSamplerSeededByEpoch(SequentialSampler):
         )
 
 
-from ..opensloth_config import OpenSlothConfig
 
 
 def patch_sampler(trainer: Trainer) -> None:

@@ -5,7 +5,6 @@ def patch_gemma3_unsloth_for_sequence_packing():
     logger.warning(
         "We are patching Gemma3 for sequence packing. This is an Unsloth-specific patch."
     )
-    from typing import List, Optional, Tuple, Union
 
     import torch
     import transformers
@@ -20,21 +19,21 @@ def patch_gemma3_unsloth_for_sequence_packing():
     @patch
     def forward(
         self: transformers.models.gemma3.modeling_gemma3.Gemma3ForConditionalGeneration,
-        input_ids: Optional[torch.LongTensor] = None,
-        pixel_values: Optional[torch.FloatTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Union[List[torch.FloatTensor], Cache]] = None,
-        token_type_ids: Optional[torch.LongTensor] = None,
-        cache_position: Optional[torch.LongTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        logits_to_keep: Union[int, torch.Tensor] = 0,
+        input_ids: torch.LongTensor | None = None,
+        pixel_values: torch.FloatTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: list[torch.FloatTensor] | Cache | None = None,
+        token_type_ids: torch.LongTensor | None = None,
+        cache_position: torch.LongTensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        labels: torch.LongTensor | None = None,
+        use_cache: bool | None = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
+        logits_to_keep: int | torch.Tensor = 0,
         **lm_kwargs,
-    ) -> Union[Tuple, Gemma3CausalLMOutputWithPast]:
+    ) -> tuple | Gemma3CausalLMOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError(
                 "You must specify exactly one of input_ids or inputs_embeds"
@@ -131,10 +130,7 @@ def patch_gemma3_unsloth_for_sequence_packing():
         )
         if labels is not None and attention_mask is not None:
             attention_mask = attention_mask.to(device=labels.device)
-            if len(attention_mask.shape) == 3:
-                apply_map = attention_mask.sum(-1) == 0
-            else:
-                apply_map = attention_mask == 0
+            apply_map = attention_mask.sum(-1) == 0 if len(attention_mask.shape) == 3 else attention_mask == 0
             labels[apply_map] = -100
         pass
         outputs = self.language_model(

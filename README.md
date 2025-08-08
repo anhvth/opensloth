@@ -1,3 +1,17 @@
+# Python Version Compatibility
+
+**Important:** This project only supports Python 3.10.x.
+
+Due to strict dependency requirements (notably from `unsloth` and `cut-cross-entropy`), you must use Python 3.10 for all development and production environments. Other Python versions (3.9, 3.11, 3.12, etc.) are not compatible and will result in installation errors.
+
+**How to check your Python version:**
+
+```sh
+python --version
+```
+
+If you are not using Python 3.10.x, please create a new virtual environment with Python 3.10 before installing dependencies.
+
 <p align="center">
     <img src="images/opensloth.png" alt="opensloth Logo" width="200" />
 </p>
@@ -85,11 +99,42 @@ TrainingConfig(
 
 ## 🔧 Troubleshooting
 
-   **Single GPU Testing:**
-   ```python
-   # In your training script, change:
-   gpus = [0]  # Use only first GPU for debugging
-   ```
+
+### Triton Kernel Compilation Error: Missing Python.h
+
+If you encounter an error like:
+
+```
+/tmp/tmpy04kmz_t/main.c:4:10: fatal error: Python.h: No such file or directory
+    4 | #include <Python.h>
+```
+
+This means a C extension (such as Triton, used by Unsloth) is trying to compile native code and cannot find the Python development headers (`Python.h`).
+
+#### How to Fix
+
+Install the Python development package for your Python version:
+
+**Ubuntu/Debian:**
+
+```bash
+sudo apt update
+sudo apt install python3.10-dev
+```
+
+Replace `python3.10-dev` with your Python version if needed (e.g., `python3.11-dev`).
+
+**Notes:**
+- This is common for packages that compile native extensions (Triton, PyTorch custom kernels, etc.).
+- After installing, you do **not** need to reinstall your virtual environment—just re-run your script.
+
+If you are on a different OS (CentOS, macOS, etc.), please consult your system's package manager or ask for specific instructions.
+
+**Single GPU Testing:**
+```python
+# In your training script, change:
+gpus = [0]  # Use only first GPU for debugging
+```
 
 ## 📖 Documentation
 

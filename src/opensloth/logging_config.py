@@ -1,3 +1,8 @@
+# Duration threshold constants
+DURATION_SHORT_SKIP = 3
+DURATION_SECONDS_IN_MINUTE = 60
+DURATION_SECONDS_IN_HOUR = 3600
+DURATION_MS_THRESHOLD = 0.1
 """
 Enhanced logging configuration for opensloth with improved formatting and organization.
 """
@@ -5,12 +10,9 @@ Enhanced logging configuration for opensloth with improved formatting and organi
 import os
 import sys
 import time
-from typing import Optional, Dict, Any
 
 from rich.console import Console
 from rich.table import Table
-from rich.panel import Panel
-from rich.text import Text
 
 # from speedy_utils import setup_logger
 COUNT = 0
@@ -22,7 +24,7 @@ class StepTimer:
     def __init__(self, step_name: str):
         self.step_name = step_name
         self.start_time = time.time()
-        self.end_time: Optional[float] = None
+        self.end_time: float | None = None
 
     def finish(self) -> float:
         """Finish timing and return duration."""
@@ -53,9 +55,9 @@ class OpenslothLogger:
         self.console = Console()
 
         # Timing tracking
-        self.step_timers: Dict[str, StepTimer] = {}
-        self.step_durations: Dict[str, list] = {}  # Store history of durations
-        self.total_training_start: Optional[float] = None
+        self.step_timers: dict[str, StepTimer] = {}
+        self.step_durations: dict[str, list] = {}  # Store history of durations
+        self.total_training_start: float | None = None
 
         self._setup_logger()
 
@@ -167,11 +169,11 @@ class OpenslothLogger:
     def _log_step_duration(self, step_name: str, duration: float) -> None:
         """Log the duration of a completed step."""
         # Skip logging very short durations (less than 0.5 seconds) to reduce noise
-        if duration < 3:
+        if duration < DURATION_SHORT_SKIP:
             return
-        if duration < 60:
+        if duration < DURATION_SECONDS_IN_MINUTE:
             duration_str = f"{duration:.2f}s"
-        elif duration < 3600:
+        elif duration < DURATION_SECONDS_IN_HOUR:
             duration_str = f"{duration/60:.1f}m"
         else:
             duration_str = f"{duration/3600:.1f}h"
@@ -215,11 +217,11 @@ class OpenslothLogger:
 
                 # Format durations
                 def format_duration(dur: float) -> str:
-                    if dur < 0.1:
+                    if dur < DURATION_MS_THRESHOLD:
                         return f"{dur*1000:.1f}ms"
-                    elif dur < 60:
+                    elif dur < DURATION_SECONDS_IN_MINUTE:
                         return f"{dur:.2f}s"
-                    elif dur < 3600:
+                    elif dur < DURATION_SECONDS_IN_HOUR:
                         return f"{dur/60:.1f}m"
                     else:
                         return f"{dur/3600:.1f}h"
@@ -268,11 +270,11 @@ class OpenslothLogger:
 
     def _format_duration(self, duration: float) -> str:
         """Format duration consistently."""
-        if duration < 0.1:
+        if duration < DURATION_MS_THRESHOLD:
             return f"{duration*1000:.1f}ms"
-        elif duration < 60:
+        elif duration < DURATION_SECONDS_IN_MINUTE:
             return f"{duration:.2f}s"
-        elif duration < 3600:
+        elif duration < DURATION_SECONDS_IN_HOUR:
             return f"{duration/60:.1f}m"
         else:
             return f"{duration/3600:.1f}h"
@@ -297,14 +299,14 @@ class OpenslothLogger:
 VALID_LOGGER = None
 
 
-def get_opensloth_logger(log_level=None, allow_unknown_gpu=False) -> OpenslothLogger:
-    # log level is now overridden by environment variable OPENSLOTH_LOG_LEVEL
+def get_opensloth_logger(allow_unknown_gpu=False) -> OpenslothLogger:
     """Setup and return enhanced logger instance."""
-    global VALID_LOGGER
-    if VALID_LOGGER is not None:
-        return VALID_LOGGER
+    if get_opensloth_logger.VALID_LOGGER is not None:
+        return get_opensloth_logger.VALID_LOGGER
 
     logger = OpenslothLogger(allow_unknown_gpu=allow_unknown_gpu)
     if not allow_unknown_gpu:
-        VALID_LOGGER = logger
+        get_opensloth_logger.VALID_LOGGER = logger
     return logger
+
+get_opensloth_logger.VALID_LOGGER = None

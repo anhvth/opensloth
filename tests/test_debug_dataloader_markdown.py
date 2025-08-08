@@ -1,7 +1,9 @@
 import os
+
 import torch
-from transformers import AutoTokenizer
+
 from src.opensloth._debug_dataloader import debug_chat_dataloader_for_training_markdown
+
 
 class DummyTokenizer:
     def __init__(self):

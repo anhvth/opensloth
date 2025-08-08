@@ -1,15 +1,14 @@
-from typing import List
-from transformers import AutoTokenizer
-from speedy_utils import *
-import datasets
 import warnings
 
+from speedy_utils import *
+
+
 def train_on_target_text_only(
-    ids: List[int],
+    ids: list[int],
     tokenizer,
     instruction_part: str,
     response_part: str,
-) -> List[int]:
+) -> list[int]:
     """
     Keep tokens that belong to the *assistant response* and mask everything else
     with -100 so the language-model loss is only computed on answers.
@@ -60,7 +59,7 @@ def train_on_target_text_only(
         try:
             q_start = ids.index(q_tokens[0], span_start)
             # ensure full subsequence match;
-            # if it isn’t, keep searching forward
+            # if it isn't, keep searching forward
             while ids[q_start : q_start + len_q] != q_tokens:
                 q_start = ids.index(q_tokens[0], q_start + 1)
             span_end = q_start                              # stop *before* user marker
@@ -76,7 +75,7 @@ def train_on_target_text_only(
         pos = span_end
 
     if not found_any:
-        warnings.warn("No assistant response found to train on in this sequence.")
+        warnings.warn("No assistant response found to train on in this sequence.", stacklevel=2)
 
     return labels
     

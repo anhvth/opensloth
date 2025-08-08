@@ -1,6 +1,5 @@
 from opensloth.opensloth_config import (
     FastModelArgs,
-    LoraArgs,
     OpenSlothConfig,
     TrainingArguments,
 )
@@ -62,6 +61,5 @@ training_config = TrainingArguments(
 
 
 if __name__ == "__main__":
-    import os
     setup_envs(opensloth_config, training_config)
     run_mp_training(opensloth_config.devices, opensloth_config, training_config)

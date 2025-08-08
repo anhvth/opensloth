@@ -14,8 +14,8 @@ from .opensloth_config import OpenSlothConfig, TrainingArguments
 def init_model_and_tokenizer(opensloth_config: OpenSlothConfig):
     """Initialize and optionally set up LoRA for the model."""
 
-    CUDA_DEVICES = os.environ.get("CUDA_VISIBLE_DEVICES", "")
-    assert len(CUDA_DEVICES) == 1
+    cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    assert len(cuda_devices) == 1
 
     from unsloth import FastModel
 
@@ -224,12 +224,12 @@ def configure_batch_size(hf_train_args, gpu_ith, num_gpus):
     if num_gpus != 1:
         hf_train_args.per_device_train_batch_size *= num_gpus  # This is the total batch size loaded by dataloader, the trainer later will chose the correct batch size for each GPU
 
-    if not gpu_ith == 0:
+    if gpu_ith != 0:
         hf_train_args.report_to = "none"
 
 
 __all__ = [
     "configure_batch_size",
-    "init_model_and_tokenizer",
     "create_trainer",
+    "init_model_and_tokenizer",
 ]

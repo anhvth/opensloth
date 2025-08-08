@@ -1,9 +1,8 @@
-from typing import Dict, List
 
 from fastcore.all import patch
 from transformers.trainer import *
 
-from ..logging_config import get_opensloth_logger
+from opensloth.logging_config import get_opensloth_logger
 
 # def _to_batch(items, pad_values):
 #     """Convert a list of items to a batch with padding."""
@@ -67,10 +66,10 @@ from ..logging_config import get_opensloth_logger
 
 
 def pack(
-    input_ids_list: List[torch.Tensor],
-    labels_list: List[torch.Tensor],
-    attention_mask_list: List[torch.Tensor],
-) -> Dict[str, torch.Tensor]:
+    input_ids_list: list[torch.Tensor],
+    labels_list: list[torch.Tensor],
+    attention_mask_list: list[torch.Tensor],
+) -> dict[str, torch.Tensor]:
     """Pack multiple sequences into a single batch with proper attention masking."""
 
     if not input_ids_list:
@@ -137,7 +136,7 @@ def pack(
     }
 
 
-from ..opensloth_config import OpenSlothConfig
+from opensloth.opensloth_config import OpenSlothConfig
 
 
 def patch_get_batch_samples(opensloth_config: OpenSlothConfig):
@@ -180,7 +179,7 @@ def patch_get_batch_samples(opensloth_config: OpenSlothConfig):
         max_seq_len = opensloth_config.fast_model_args.max_seq_length
 
         all_items = []
-        origin_batch_size = batch_samples[0]["input_ids"].shape[0]
+        batch_samples[0]["input_ids"].shape[0]
         for accumulated_batch in batch_samples:
             input_ids, labels, attention_mask = (
                 accumulated_batch["input_ids"],

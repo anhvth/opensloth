@@ -1,9 +1,9 @@
 import os
 import time
-from typing import Dict, Optional
+
 import numpy as np
-from filelock import FileLock, BaseFileLock
 from fastcore.all import patch
+from filelock import BaseFileLock, FileLock
 from transformers.trainer_utils import speed_metrics
 
 TIME_OUT = 300
@@ -21,9 +21,8 @@ class Flag:
 
         if self.is_master:
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            with self.lock:
-                with open(self.file_path, "wb") as f:
-                    f.truncate(world_size * 4)
+            with self.lock, open(self.file_path, "wb") as f:
+                f.truncate(world_size * 4)
         else:
             self._wait_for_file()
 
@@ -110,51 +109,51 @@ class Flag:
             self.mem.flush()
 
 
-def patch_log(T: type) -> type:
+def patch_log(t: type) -> type:
     support_keys = [
         "loss",
         "grad_norm",
     ]
-    LOG_MMAP: Dict[str, np.memmap] = {}
-    LOG_LOCKS: Dict[str, BaseFileLock] = {}
+    log_mmap: dict[str, np.memmap] = {}
+    log_locks: dict[str, BaseFileLock] = {}
 
     try:
-        LOCAL_RANK = int(os.environ["OPENSLOTH_LOCAL_RANK"])
-        WORLD_SIZE = int(os.environ["OPENSLOTH_WORLD_SIZE"])
-        LOG_CACHE_DIR = os.environ["OPENSLOTH_OUTPUT_DIR"]
-        is_main = LOCAL_RANK == 0
+        local_rank = int(os.environ["OPENSLOTH_LOCAL_RANK"])
+        world_size = int(os.environ["OPENSLOTH_WORLD_SIZE"])
+        log_cache_dir = os.environ["OPENSLOTH_OUTPUT_DIR"]
+        is_main = local_rank == 0
 
-        print(f"[{LOCAL_RANK=}] Patching log. Dir: {LOG_CACHE_DIR}, GPUs: {WORLD_SIZE}")
+        print(f"[{local_rank=}] Patching log. Dir: {log_cache_dir}, GPUs: {world_size}")
 
         if is_main:
-            os.makedirs(LOG_CACHE_DIR, exist_ok=True)
+            os.makedirs(log_cache_dir, exist_ok=True)
         else:
-            _wait_for_directory(LOG_CACHE_DIR, LOCAL_RANK)
+            _wait_for_directory(log_cache_dir, local_rank)
 
         _initialize_mmaps(
             support_keys,
-            LOG_CACHE_DIR,
-            WORLD_SIZE,
-            LOCAL_RANK,
+            log_cache_dir,
+            world_size,
+            local_rank,
             is_main,
-            LOG_MMAP,
-            LOG_LOCKS,
+            log_mmap,
+            log_locks,
         )
 
         log_sync_flag = Flag(
-            world_size=WORLD_SIZE,
-            file_path=f"{LOG_CACHE_DIR}/log_sync_flag.dat",
+            world_size=world_size,
+            file_path=f"{log_cache_dir}/log_sync_flag.dat",
             is_master=is_main,
         )
-        print(f"[{LOCAL_RANK=}] Log patch initialization complete.")
+        print(f"[{local_rank=}] Log patch initialization complete.")
 
     except Exception as e:
-        print(f"[{LOCAL_RANK=}] CRITICAL ERROR during initialization: {e}")
+    print(f"[{local_rank=}] CRITICAL ERROR during initialization: {e}")
         raise e
 
     @patch
     def log(
-        self: T, logs: Dict[str, float], start_time: Optional[float] = None
+        self, logs: dict[str, float], start_time: float | None = None
     ) -> None:
         if self.state.epoch is not None:
             logs["epoch"] = round(self.state.epoch, 2)
@@ -181,31 +180,31 @@ def patch_log(T: type) -> type:
 
         if "loss" in logs:
             try:
-                _write_logs_to_mmap(logs, support_keys, LOG_MMAP, LOG_LOCKS, LOCAL_RANK)
-                log_sync_flag.update(LOCAL_RANK)
+                _write_logs_to_mmap(logs, support_keys, log_mmap, log_locks, local_rank)
+                log_sync_flag.update(local_rank)
 
                 if is_main:
                     _handle_master_logging(
                         log_sync_flag,
                         support_keys,
-                        LOG_MMAP,
-                        LOG_LOCKS,
+                        log_mmap,
+                        log_locks,
                         logs,
                         current_step,
                         self,
                     )
                 else:
-                    log_sync_flag.wait_for_reset(rank=LOCAL_RANK, step=current_step)
+                    log_sync_flag.wait_for_reset(rank=local_rank, step=current_step)
 
             except Exception as e:
-                print(f"Rank {LOCAL_RANK} logging error at step {current_step}: {e}")
+                print(f"Rank {local_rank} logging error at step {current_step}: {e}")
 
         elif is_main:
             self.control = self.callback_handler.on_log(
                 self.args, self.state, self.control, logs
             )
 
-    return T
+    return t
 
 
 def _wait_for_directory(cache_dir: str, rank: int) -> None:
@@ -222,17 +221,16 @@ def _initialize_mmaps(
     world_size: int,
     rank: int,
     is_main: bool,
-    log_mmap: Dict,
-    log_locks: Dict,
+    log_mmap: dict,
+    log_locks: dict,
 ) -> None:
     for key in support_keys:
         mmap_path = f"{cache_dir}/log_{key}.mmap"
         log_locks[key] = FileLock(mmap_path + ".lock")
 
         if is_main:
-            with log_locks[key]:
-                with open(mmap_path, "wb") as f:
-                    f.truncate(world_size * 4)
+            with log_locks[key], open(mmap_path, "wb") as f:
+                f.truncate(world_size * 4)
         else:
             t0 = time.time()
             while not os.path.exists(mmap_path):
@@ -251,7 +249,7 @@ def _initialize_mmaps(
 
 
 def _create_mmap(
-    mmap_path: str, world_size: int, rank: int, log_mmap: Dict, key: str
+    mmap_path: str, world_size: int, rank: int, log_mmap: dict, key: str
 ) -> None:
     t0 = time.time()
     expected_size = world_size * 4
@@ -275,10 +273,10 @@ def _create_mmap(
 
 
 def _write_logs_to_mmap(
-    logs: Dict[str, float],
+    logs: dict[str, float],
     support_keys: list,
-    log_mmap: Dict,
-    log_locks: Dict,
+    log_mmap: dict,
+    log_locks: dict,
     rank: int,
 ) -> None:
     for key in support_keys:
@@ -289,8 +287,8 @@ def _write_logs_to_mmap(
 
 
 def _aggregate_logs(
-    logs: Dict[str, float], support_keys: list, log_mmap: Dict, log_locks: Dict
-) -> Dict[str, float]:
+    logs: dict[str, float], support_keys: list, log_mmap: dict, log_locks: dict
+) -> dict[str, float]:
     aggregated = logs.copy()
 
     for key in support_keys:
@@ -308,7 +306,7 @@ def _aggregate_logs(
     return aggregated
 
 
-def _reset_mmaps(support_keys: list, log_mmap: Dict, log_locks: Dict) -> None:
+def _reset_mmaps(support_keys: list, log_mmap: dict, log_locks: dict) -> None:
     for key in support_keys:
         with log_locks[key]:
             log_mmap[key][:] = 0.0
@@ -318,9 +316,9 @@ def _reset_mmaps(support_keys: list, log_mmap: Dict, log_locks: Dict) -> None:
 def _handle_master_logging(
     flag,
     support_keys: list,
-    log_mmap: Dict,
-    log_locks: Dict,
-    logs: Dict,
+    log_mmap: dict,
+    log_locks: dict,
+    logs: dict,
     step: int,
     trainer,
 ) -> None:

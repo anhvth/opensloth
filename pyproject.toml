@@ -5,7 +5,7 @@ description = "A high-performance framework for fine-tuning large language model
 authors = [{ name = "anhvth", email = "anhvth.226@gmail.com" }]
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.9"
+    requires-python = ">=3.10,<3.11"
 keywords = [
     "machine learning",
     "deep learning",
@@ -36,6 +36,8 @@ dependencies = [
     "tensorboard (>=2.19.0,<3.0.0)",
     "fire (>=0.7.0,<0.8.0)",
     "tensorboardx (>=2.6.2.2,<3.0.0.0)",
+    "ruff (>=0.12.8,<0.13.0)",
+    "unsloth (>=2025.8.1,<2026.0.0)",
 ]
 
 [project.urls]
@@ -57,3 +59,37 @@ packages = [{ include = "opensloth", from = "src" }]
 
 [tool.poetry.scripts]
 opensloth-train = "opensloth.scripts.opensloth_sft_trainer:train"
+
+[tool.ruff]
+line-length = 120
+exclude = [
+    "__pycache__",
+    "build",
+    "dist",
+    "unsloth_compiled_cache",
+    "outputs",
+    "trainer_output",
+    "sparse_logs",
+    "*.ipynb",
+    "tests/",
+]
+target-version = "py311"
+
+[tool.ruff.lint]
+ignore = [
+    "E501",  # line too long (handled by line-length)
+    "E203",  # whitespace before ':' (black compatibility)
+    "W291",  # trailing whitespace
+    "W293",  # blank line contains whitespace
+    "F403",  # 'from module import *' used; unable to detect undefined names
+    "F405",  # name may be undefined, or defined from star imports
+    "PLC0415",  # import should be at the top-level of a file (deliberate in this project)
+    "PLR0913", # Too many arguments (function has 4 positional arguments, but 3 are allowed)
+]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "TID", "ARG", "PL", "RUF"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "lf"

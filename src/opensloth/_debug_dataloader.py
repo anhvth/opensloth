@@ -1,5 +1,5 @@
+import itertools
 import os
-from typing import List, Tuple
 
 
 def _escape_html(text: str) -> str:
@@ -7,7 +7,7 @@ def _escape_html(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _get_split_points(parts_mask: List[bool]) -> List[int]:
+def _get_split_points(parts_mask: list[bool]) -> list[int]:
     """Find split points where trainable/non-trainable sections change."""
     split_points = [0]
     for i in range(1, len(parts_mask)):
@@ -18,8 +18,8 @@ def _get_split_points(parts_mask: List[bool]) -> List[int]:
 
 
 def _process_token_slice(
-    input_ids: List[int], a: int, b: int, tokenizer, max_tokens: int
-) -> Tuple[str, bool]:
+    input_ids: list[int], a: int, b: int, tokenizer, max_tokens: int
+) -> tuple[str, bool]:
     """Process a slice of tokens and return decoded text and truncation flag."""
     decode_token = input_ids[a:b]
 
@@ -118,7 +118,7 @@ def debug_chat_dataloader_for_training(dataloader, tokenizer, n_example=10):
                 "    <table>\n        <tr><th>Text</th><th>Label</th></tr>\n"
             )
 
-            for a, b in zip(split_points[:-1], split_points[1:]):
+            for a, b in itertools.pairwise(split_points):
                 text, is_truncated = _process_token_slice(
                     input_ids, a, b, tokenizer, max_print_tokens
                 )
@@ -174,8 +174,8 @@ def debug_chat_dataloader_for_training_markdown(dataloader, tokenizer, n_example
     log_path = f".log/today_{now}.log"
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
-    GREEN = "\033[92m"
-    RESET = "\033[0m"
+    green = "\033[92m"
+    reset = "\033[0m"
 
     lines = []
     for i in range(n_example):
@@ -186,14 +186,11 @@ def debug_chat_dataloader_for_training_markdown(dataloader, tokenizer, n_example
         split_points = _get_split_points(parts_mask)
 
         example_lines = [f"=== Example {i+1} ==="]
-        for a, b in zip(split_points[:-1], split_points[1:]):
+        for a, b in itertools.pairwise(split_points):
             decode_token = input_ids[a:b]
             text = tokenizer.decode(decode_token, skip_special_tokens=False)
             is_trainable = parts_mask[a]
-            if is_trainable:
-                colored = f"{GREEN}{text}{RESET}"
-            else:
-                colored = text
+            colored = f"{green}{text}{reset}" if is_trainable else text
             example_lines.append(colored)
         example_lines.append("")
         lines.extend(example_lines)

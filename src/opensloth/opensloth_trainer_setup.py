@@ -24,9 +24,7 @@ def _change_compiler_location() -> None:
     # ====== Patching the compiler location to avoid race conditions as it is shared between GPUs
     gpu_ith = int(os.environ["OPENSLOTH_LOCAL_RANK"])
 
-    compiler.UNSLOTH_COMPILE_LOCATION = ".cache/{}_{}".format(
-        compiler.UNSLOTH_COMPILE_LOCATION, gpu_ith
-    )
+    compiler.UNSLOTH_COMPILE_LOCATION = f".cache/{compiler.UNSLOTH_COMPILE_LOCATION}_{gpu_ith}"
     print(f"Using compiler location: {compiler.UNSLOTH_COMPILE_LOCATION}")
 
 
