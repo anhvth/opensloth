@@ -52,8 +52,11 @@ Documentation = "https://github.com/anhvth/opensloth"
 
 [project.scripts]
 opensloth-sft-train = "opensloth.scripts.opensloth_sft_trainer:main"
-opensloth-dataset = "opensloth.scripts.dataset_cli_simple:main"
-opensloth-train = "opensloth.scripts.train_cli_simple:main"
+opensloth-dataset = "opensloth.scripts.dataset_cli_typer:app"
+opensloth-train = "opensloth.scripts.train_cli_typer:app"
+# Legacy simple versions (kept for backwards compatibility)
+opensloth-dataset-simple = "opensloth.scripts.dataset_cli_simple:main"
+opensloth-train-simple = "opensloth.scripts.train_cli_simple:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

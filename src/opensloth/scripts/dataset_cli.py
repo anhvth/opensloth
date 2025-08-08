@@ -6,28 +6,13 @@ import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
-# Add project root and prepare_dataset to path for imports
-def setup_imports():
-    """Setup import paths for the CLI script."""
-    script_dir = Path(__file__).parent
-    project_root = script_dir.parent.parent.parent
-    prepare_dataset_dir = project_root / "prepare_dataset"
-    
-    # Add both to sys.path
-    for path in [str(project_root), str(prepare_dataset_dir)]:
-        if path not in sys.path:
-            sys.path.insert(0, path)
-    
-    # Change to project root for relative imports
-    os.chdir(str(project_root))
-
-setup_imports()
-
-# Now import the modules
-from prepare_dataset.config_schema import DatasetPrepConfig
-from prepare_dataset.base_dataset_preparer import BaseDatasetPreparer
-from prepare_dataset.prepare_qwen import QwenDatasetPreparer
-from prepare_dataset.prepare_gemma import GemmaDatasetPreparer
+# Import from the proper module structure
+from opensloth.dataset import (
+    DatasetPrepConfig,
+    BaseDatasetPreparer,
+    QwenDatasetPreparer,
+    GemmaDatasetPreparer
+)
 
 
 # Model family mappings
@@ -97,9 +82,7 @@ def generate_output_dir(model_name: str, dataset_name: str, num_samples: int) ->
 
 def list_presets() -> List[str]:
     """List available preset configurations."""
-    script_dir = Path(__file__).parent
-    project_root = script_dir.parent.parent.parent
-    preset_dir = project_root / "prepare_dataset" / "presets" / "data"
+    preset_dir = Path(__file__).parent.parent / "dataset" / "presets" / "data"
     
     if not preset_dir.exists():
         return []
@@ -120,9 +103,7 @@ def list_presets() -> List[str]:
 
 def save_preset(name: str, config: Dict[str, Any]) -> None:
     """Save configuration as a preset."""
-    script_dir = Path(__file__).parent
-    project_root = script_dir.parent.parent.parent
-    preset_dir = project_root / "prepare_dataset" / "presets" / "data"
+    preset_dir = Path(__file__).parent.parent / "dataset" / "presets" / "data"
     preset_dir.mkdir(parents=True, exist_ok=True)
     
     filename = name.lower().replace(" ", "_") + ".json"
@@ -136,9 +117,7 @@ def save_preset(name: str, config: Dict[str, Any]) -> None:
 
 def load_preset(name: str) -> Optional[Dict[str, Any]]:
     """Load a preset configuration."""
-    script_dir = Path(__file__).parent
-    project_root = script_dir.parent.parent.parent
-    preset_dir = project_root / "prepare_dataset" / "presets" / "data"
+    preset_dir = Path(__file__).parent.parent / "dataset" / "presets" / "data"
     
     # Try exact filename first
     filename = name.lower().replace(" ", "_") + ".json"

@@ -14,6 +14,11 @@ import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
+try:
+    import torch
+except ImportError:
+    torch = None
+
 # Import OpenSloth configuration classes
 current_dir = Path(__file__).parent.parent
 if str(current_dir) not in sys.path:
