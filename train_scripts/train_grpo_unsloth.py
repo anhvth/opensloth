@@ -10,7 +10,7 @@ from opensloth.opensloth_config import (
     OpenSlothConfig,
     TrainingArguments,
 )
-from opensloth.scripts.opensloth_sft_trainer import run_mp_training, setup_envs
+from opensloth.scripts.opensloth_trainer import run_mp_training, setup_envs
 
 # GRPO configuration for 0.5B model with fast experiment settings
 opensloth_config = OpenSlothConfig(
@@ -86,7 +86,7 @@ if __name__ == "__main__":
         )
     else:
         print(f"Single GPU GRPO training on GPU: {opensloth_config.devices[0]}")
-        from opensloth.scripts.opensloth_sft_trainer import train_on_single_gpu
+        from opensloth.scripts.opensloth_trainer import train_on_single_gpu
         train_on_single_gpu(
             gpu=opensloth_config.devices[0],
             opensloth_config=opensloth_config,

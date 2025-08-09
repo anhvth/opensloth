@@ -99,7 +99,7 @@ training_config = TrainingArguments(
 ### 3. Run Training
 
 ```python
-from opensloth.scripts.opensloth_sft_trainer import run_mp_training, train_on_single_gpu
+from opensloth.scripts.opensloth_trainer import run_mp_training, train_on_single_gpu
 
 # Single GPU
 train_on_single_gpu(

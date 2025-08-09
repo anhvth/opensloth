@@ -997,7 +997,7 @@ training_config = TrainingArguments(**json.loads(_training_args_json))
             cmd = [
                 sys.executable,
                 "-m",
-                "opensloth.scripts.opensloth_sft_trainer",
+                "opensloth.scripts.opensloth_trainer",
                 str(cfg_path),
                 "--tmux",
                 session,
@@ -1014,7 +1014,7 @@ training_config = TrainingArguments(**json.loads(_training_args_json))
 
         # Direct (non-tmux) path
         console.print("\n🔄 Starting training (direct multi-process)...")
-        from opensloth.scripts.opensloth_sft_trainer import run_mp_training, setup_envs
+        from opensloth.scripts.opensloth_trainer import run_mp_training, setup_envs
         setup_envs(opensloth_config, training_args)
         run_mp_training(opensloth_config.devices, opensloth_config, training_args)
         console.print(f"\n🎉 [bold green]Training completed![/bold green]")

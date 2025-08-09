@@ -86,7 +86,7 @@ class GRPOArgs(BaseModel):
     # ... more options
 ```
 
-### 4. **Multi-GPU Support** (`src/opensloth/scripts/opensloth_sft_trainer.py`)
+### 4. **Multi-GPU Support** (`src/opensloth/scripts/opensloth_trainer.py`)
 
 **Integration Points:**
 - Modified `train_on_single_gpu_grpo()` to use new trainer

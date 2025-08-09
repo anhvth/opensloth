@@ -10,7 +10,7 @@ from opensloth.opensloth_config import (
     TrainingArguments,
     DPOArgs
 )
-from opensloth.scripts.opensloth_sft_trainer import run_mp_training, setup_envs
+from opensloth.scripts.opensloth_trainer import run_mp_training, setup_envs
 
 # Example DPO configuration
 opensloth_config = OpenSlothConfig(
@@ -80,7 +80,7 @@ if __name__ == "__main__":
         )
     else:
         # Single GPU DPO training
-        from opensloth.scripts.opensloth_sft_trainer import train_on_single_gpu
+        from opensloth.scripts.opensloth_trainer import train_on_single_gpu
         train_on_single_gpu(
             gpu=opensloth_config.devices[0],
             opensloth_config=opensloth_config,

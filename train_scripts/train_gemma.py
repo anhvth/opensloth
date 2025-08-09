@@ -10,7 +10,7 @@ from opensloth.opensloth_config import (
     OpenSlothConfig,
     TrainingArguments,
 )
-from opensloth.scripts.opensloth_sft_trainer import run_mp_training, setup_envs
+from opensloth.scripts.opensloth_trainer import run_mp_training, setup_envs
 
 GLOBAL_BZ = 32
 
