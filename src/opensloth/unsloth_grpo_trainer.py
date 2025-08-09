@@ -20,15 +20,19 @@ def setup_grpo_training(
     opensloth_config: OpenSlothConfig,
     hf_train_args: TrainingArguments,
     logger: OpenslothLogger,
-    gpu: int
+    gpu: int,
+    unsloth_modules: Dict
 ):
     """
     Setup GRPO training using native Unsloth + TRL GRPOTrainer.
     This is a thin wrapper that follows the Unsloth tutorial pattern exactly.
     """
-    from unsloth import FastLanguageModel
+    # Get modules from the passed dictionary
+    FastLanguageModel = unsloth_modules["FastLanguageModel"]
+    GRPOConfig = unsloth_modules["GRPOConfig"]
+    GRPOTrainer = unsloth_modules["GRPOTrainer"]
+    
     from datasets import load_from_disk
-    from trl import GRPOConfig, GRPOTrainer
     from vllm import SamplingParams
     import re
     
@@ -198,8 +202,22 @@ def run_grpo_training(trainer, model, tokenizer, logger, gpu, opensloth_config):
         
         # Save LoRA adapter (following tutorial)
         lora_save_path = os.path.join(output_dir, "grpo_lora_adapter")
-        model.save_lora(lora_save_path)
-        logger.info(f"Saved GRPO LoRA adapter to {lora_save_path}")
+        
+        # Check if model has save_lora method, otherwise use save_pretrained_merged
+        if hasattr(model, 'save_lora'):
+            model.save_lora(lora_save_path)
+            logger.info(f"Saved GRPO LoRA adapter to {lora_save_path}")
+        elif hasattr(model, 'save_pretrained'):
+            # For LoRA models, save the adapter
+            if hasattr(model, 'peft_config'):
+                model.save_pretrained(lora_save_path)
+                logger.info(f"Saved GRPO LoRA adapter to {lora_save_path}")
+            else:
+                # Full model save
+                model.save_pretrained(output_dir)
+                logger.info(f"Saved GRPO model to {output_dir}")
+        else:
+            logger.warning("Model doesn't have save_lora or save_pretrained method")
         
         # Save tokenizer
         tokenizer.save_pretrained(output_dir)

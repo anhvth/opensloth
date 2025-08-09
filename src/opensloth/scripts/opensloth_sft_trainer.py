@@ -8,7 +8,7 @@ import importlib.util
 import os
 import sys
 import time
-from typing import Any, List
+from typing import Any, List, Dict
 import warnings
 
 import argparse
@@ -35,7 +35,7 @@ def get_current_python_path():
         return None
 
 
-def _import_unsloth(gpu: int) -> None|List[Any]:
+def _import_unsloth(gpu: int) -> Dict[str, Any]:
     import os
     os.makedirs(f".cache/", exist_ok=True)
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
@@ -48,9 +48,19 @@ def _import_unsloth(gpu: int) -> None|List[Any]:
         assert trl_is_not_imported
         #====
         import unsloth # unsloth must be import before trl
-        from trl import SFTConfig, SFTTrainer
+        from trl import SFTConfig, SFTTrainer, GRPOConfig, GRPOTrainer
         print("Unsloth version:", unsloth.__version__)
-        return unsloth, SFTConfig, SFTTrainer
+        
+        # Return a dictionary with all needed modules
+        return {
+            "unsloth": unsloth,
+            "FastLanguageModel": unsloth.FastLanguageModel,
+            "FastModel": unsloth.FastModel,
+            "SFTConfig": SFTConfig,
+            "SFTTrainer": SFTTrainer,
+            "GRPOConfig": GRPOConfig,
+            "GRPOTrainer": GRPOTrainer,
+        }
     except AttributeError as e:
         import warnings
         if "Unsloth" in str(e) and "has no attribute" in str(e):
@@ -69,6 +79,8 @@ def train_on_single_gpu_grpo(
     This is a thin wrapper around the Unsloth tutorial pattern.
     """
     
+    unsloth_modules = _import_unsloth(gpu)
+    
     os.environ["OPENSLOTH_LOCAL_RANK"] = str(opensloth_config.devices.index(gpu))
     logger = OpenslothLogger()
     
@@ -83,7 +95,8 @@ def train_on_single_gpu_grpo(
             opensloth_config=opensloth_config,
             hf_train_args=hf_train_args,
             logger=logger,
-            gpu=gpu
+            gpu=gpu,
+            unsloth_modules=unsloth_modules
         )
         
         # Run GRPO training with multi-GPU support
@@ -112,7 +125,7 @@ def train_on_single_gpu(
     if opensloth_config.training_type == "grpo":
         return train_on_single_gpu_grpo(gpu, opensloth_config, hf_train_args)
     
-    _import_unsloth(gpu)
+    unsloth_modules = _import_unsloth(gpu)
     from opensloth.opensloth_trainer_setup import setup_model_and_training
 
     os.environ["OPENSLOTH_LOCAL_RANK"] = str(opensloth_config.devices.index(gpu))
@@ -130,6 +143,7 @@ def train_on_single_gpu(
     trainer, model, tokenizer = setup_model_and_training(
         opensloth_config=opensloth_config,
         hf_train_args=hf_train_args,
+        unsloth_modules=unsloth_modules,
     )
     logger.finish_timing("model_and_training_setup")
 

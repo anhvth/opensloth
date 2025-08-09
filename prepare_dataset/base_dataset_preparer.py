@@ -21,8 +21,9 @@ from utils import train_on_target_text_only
 from opensloth._debug_dataloader import debug_chat_dataloader_for_training
 from config_printer import DatasetPreparationConfigPrinter
 
-# Unsloth utilities
-from unsloth.chat_templates import get_chat_template, standardize_data_formats
+# NOTE: Avoid global unsloth imports to prevent GPU registry issues
+# from unsloth.chat_templates import get_chat_template, standardize_data_formats
+# These will be imported on-demand when needed
 
 
 class BaseDatasetPreparer(ABC):
@@ -177,7 +178,13 @@ class BaseDatasetPreparer(ABC):
         print("[INFO] Loading tokenizer...")
         self.tokenizer = AutoTokenizer.from_pretrained(self.args.tok_name)
         print("[INFO] Patching tokenizer for chat template...")
-        self.tokenizer = get_chat_template(self.tokenizer, chat_template=self.args.chat_template)
+        # Lazy import to avoid global unsloth import
+        try:
+            from unsloth.chat_templates import get_chat_template
+            self.tokenizer = get_chat_template(self.tokenizer, chat_template=self.args.chat_template)
+        except ImportError:
+            print("[WARNING] Unsloth not available, skipping chat template setup")
+            # Fallback behavior if needed
     
     def load_dataset(self) -> datasets.Dataset:
         """Load dataset from HuggingFace or local file."""
@@ -192,7 +199,12 @@ class BaseDatasetPreparer(ABC):
             print(f"[INFO] Loading HuggingFace dataset {self.args.dataset_name}...")
             dataset = datasets.load_dataset(self.args.dataset_name, split=self.args.split)
             print("[INFO] Standardizing dataset format...")
-            dataset = standardize_data_formats(dataset)
+            # Lazy import to avoid global unsloth import
+            try:
+                from unsloth.chat_templates import standardize_data_formats
+                dataset = standardize_data_formats(dataset)
+            except ImportError:
+                print("[WARNING] Unsloth not available, skipping data format standardization")
         
         print(f"[INFO] Dataset loaded: {len(dataset)} samples.")
         return dataset

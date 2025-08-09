@@ -126,11 +126,9 @@ def _lazy_import_dataset_prep():
 
 def _get_chat_template():
     """Lazy import of Unsloth chat template utilities."""
-    try:
-        from unsloth.chat_templates import get_chat_template
-        return get_chat_template
-    except ImportError:
-        return None
+    # NOTE: Avoiding global unsloth import to prevent GPU registry issues
+    # This function is not currently used in CLI workflow
+    return None
 
 # Chat template configurations
 CHAT_TEMPLATES = {

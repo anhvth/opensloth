@@ -1,9 +1,10 @@
+
+
 def get_callback_and_setup_method():
 
     import torch
     import torch.distributed as dist
     from transformers.trainer_callback import TrainerCallback
-
     class NCCLGradSyncCallback(TrainerCallback):
         """NCCL-based gradient synchronization callback for Transformers trainer.
 
@@ -33,18 +34,26 @@ def get_callback_and_setup_method():
         def _sync_gradients(self, model: torch.nn.Module) -> None:
             """Synchronize gradients across all ranks using NCCL all-reduce."""
 
-            for _, param in model.named_parameters():
+            name_value = {}
+            for name, param in model.named_parameters():
                 if param.grad is None:
                     continue
                 dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)
                 param.grad.div_(self.world_size)
+                name_value[name] = param.grad.mean().item()
+            
+            # print(f"[RANK={self.local_rank}] Gradient sync complete: {name_value}")
+            # import ipdb; ipdb.set_trace()
 
-    def on_pre_optimizer_step(self, *_, **__):
+        def on_pre_optimizer_step(self, *_, **__):
             """Called before optimizer step - synchronize gradients."""
             # Synchronize gradients across all ranks
             self._sync_gradients(self.model)
 
-    # Add this integration code for opensloth at the end of the file
+    
+    
+    
+    #============== END OF CLASS
 
     def setup_nccl_for_opensloth(rank: int, gpus: list) -> None:
         """Setup NCCL environment variables for opensloth integration."""

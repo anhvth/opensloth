@@ -4,6 +4,7 @@ Handles weight synchronization, model setup, and distributed training coordinati
 """
 
 import os
+from typing import Dict
 
 from opensloth.init_modules import (
     configure_batch_size,
@@ -21,6 +22,7 @@ from .opensloth_config import OpenSlothConfig, TrainingArguments
 def setup_model_and_training(
     opensloth_config: OpenSlothConfig,
     hf_train_args: TrainingArguments,
+    unsloth_modules: Dict = None,
 ):
     """
     Setup the model, tokenizer, dataset, and trainer for multi-GPU training.
@@ -42,7 +44,7 @@ def setup_model_and_training(
 
     # Time model initialization
     logger.start_timing("model_init")
-    model, tokenizer = init_model_and_tokenizer(opensloth_config)
+    model, tokenizer = init_model_and_tokenizer(opensloth_config, unsloth_modules)
     logger.finish_timing("model_init")
 
     # Time trainer creation

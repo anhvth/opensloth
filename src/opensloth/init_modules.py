@@ -1,7 +1,7 @@
 """Module for initializing model/tokenizer and creating trainers (SFT, DPO, etc.)."""
 
 import os
-from typing import Tuple
+from typing import Tuple, Dict
 
 from opensloth.patching.gemma import patch_gemma3_unsloth_for_sequence_packing
 
@@ -51,11 +51,15 @@ def _validate_dataset_compatibility(dataset_path: str, model_max_seq_length: int
             )
 
 
-def init_model_and_tokenizer(opensloth_config: OpenSlothConfig) -> Tuple[object, object]:
+def init_model_and_tokenizer(opensloth_config: OpenSlothConfig, unsloth_modules: Dict = None) -> Tuple[object, object]:
     """Initialize base/LoRA model and tokenizer; set up NCCL if multi-GPU."""
     logger = get_opensloth_logger()
 
-    from unsloth import FastLanguageModel
+    # Use modules from the dictionary if provided, otherwise import (for backward compatibility)
+    if unsloth_modules is not None:
+        FastLanguageModel = unsloth_modules["FastLanguageModel"]
+    else:
+        from unsloth import FastLanguageModel
 
     logger.start_timing("model_loading")
     if opensloth_config.pretrained_lora:
@@ -94,7 +98,11 @@ def init_model_and_tokenizer(opensloth_config: OpenSlothConfig) -> Tuple[object,
         and opensloth_config.lora_args is not None
     ):
         logger.start_timing("lora_setup")
-        from unsloth import FastModel
+        # Use modules from the dictionary if provided, otherwise import (for backward compatibility)
+        if unsloth_modules is not None:
+            FastModel = unsloth_modules["FastModel"]
+        else:
+            from unsloth import FastModel
 
         model = FastModel.get_peft_model(
             model, **opensloth_config.lora_args.model_dump()  # type: ignore

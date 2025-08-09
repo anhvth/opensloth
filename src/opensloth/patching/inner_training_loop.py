@@ -479,6 +479,7 @@ def patch_inner_training_loop(trainer, sequence_packing):
                     self.current_flos += float(self.floating_point_ops(inputs))
 
                     if do_sync_step:
+                        import ipdb; ipdb.set_trace()
                         # Since we perform prefetching, we need to manually set sync_gradients to True
                         self.accelerator.gradient_state._set_sync_gradients(True)
 
@@ -515,6 +516,7 @@ def patch_inner_training_loop(trainer, sequence_packing):
                                     grad_norm = grad_norm.item()
                             else:
                                 grad_norm = _grad_norm
+                        
                         self.optimizer.step()
 
                         self.control = self.callback_handler.on_optimizer_step(
