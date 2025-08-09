@@ -88,11 +88,8 @@ class OpenslothLogger:
         return local_rank == 0
 
     def _setup_logger(self) -> None:
-        """Setup loguru logger with enhanced formatting."""
+        """Setup loguru logger with enhanced formatting and mode-aware configuration."""
         from loguru import logger as base_logger
-
-        # global COUNT
-        # COUNT += 1
 
         self.logger = base_logger.bind(gpu_id=self.gpu_id)
         self.logger.remove()
@@ -117,19 +114,39 @@ class OpenslothLogger:
                 enqueue=True,
             )
 
-        # File handler for individual GPU logs (always add these)
+        # File handlers for rank-specific logs (always add these)
         try:
-            log_file = os.path.join(os.environ["OPENSLOTH_OUTPUT_DIR"], "training.log")
-
+            output_dir = os.environ["OPENSLOTH_OUTPUT_DIR"]
+            
+            # Create logs directory
+            log_dir = os.path.join(output_dir, "logs")
+            os.makedirs(log_dir, exist_ok=True)
+            
+            # Rank-specific log file
+            rank_log_file = os.path.join(log_dir, f"gpu_{self.gpu_id}.log")
             self.logger.add(
-                log_file,
+                rank_log_file,
                 format=log_format,
                 level="DEBUG",
                 rotation="10 MB",
                 retention="1 week",
                 enqueue=True,
             )
+            
+            # Legacy training.log for backward compatibility (only on main rank)
+            if self.gpu_id == "0" or self.gpu_id == 0:
+                legacy_log_file = os.path.join(output_dir, "training.log")
+                self.logger.add(
+                    legacy_log_file,
+                    format=log_format,
+                    level="DEBUG",
+                    rotation="10 MB",
+                    retention="1 week",
+                    enqueue=True,
+                )
+                
         except KeyError:
+            # OPENSLOTH_OUTPUT_DIR not set, skip file logging
             pass
 
     def _log_with_depth(self, level: str, message: str, depth: int = 2) -> None:

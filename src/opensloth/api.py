@@ -44,6 +44,8 @@ def run_training(
     if use_tmux and not multi_gpu:
         use_tmux = False
     if use_tmux and multi_gpu:
+        # Set USE_TMUX environment variable for tmux mode
+        os.environ["USE_TMUX"] = "1"
         cfg_path = _serialise_configs_to_temp(opensloth_config, training_args)
         session = tmux_session or f"os_train_{os.getpid()}"
         run_tmux_training(
@@ -54,6 +56,9 @@ def run_training(
             auto_kill=tmux_auto_kill,
         )
         return opensloth_config, training_args
+    # Ensure USE_TMUX is not set for multiprocessing mode
+    if "USE_TMUX" in os.environ:
+        del os.environ["USE_TMUX"]
     run_mp_training(
         gpus=opensloth_config.devices,
         opensloth_config=opensloth_config,

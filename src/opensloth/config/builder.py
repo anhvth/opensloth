@@ -11,7 +11,85 @@ import json
 from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
 
 TRAINING_PRESETS: Dict[str, Dict[str, Any]] = {
-    "quick": {"description": "Quick test", "config": {"training_args": {"max_steps": 50, "per_device_train_batch_size": 1, "gradient_accumulation_steps": 4, "learning_rate": 2e-4, "logging_steps": 1, "save_total_limit": 1, "report_to": "none"}}},
+    "quick": {
+        "description": "Quick test", 
+        "config": {
+            "training_args": {
+                "max_steps": 50, 
+                "per_device_train_batch_size": 1, 
+                "gradient_accumulation_steps": 4, 
+                "learning_rate": 2e-4, 
+                "logging_steps": 1, 
+                "save_total_limit": 1, 
+                "report_to": "none"
+            }
+        }
+    },
+    "small": {
+        "description": "Small GPU setup (8GB VRAM)",
+        "config": {
+            "training_args": {
+                "per_device_train_batch_size": 1,
+                "gradient_accumulation_steps": 8,
+                "learning_rate": 2e-4,
+                "warmup_steps": 50,
+                "num_train_epochs": 3,
+                "logging_steps": 10,
+                "save_total_limit": 2,
+                "optim": "adamw_8bit"
+            },
+            "opensloth_config": {
+                "fast_model_args": {
+                    "load_in_4bit": True,
+                    "max_seq_length": 2048
+                }
+            }
+        }
+    },
+    "large": {
+        "description": "Large GPU setup (24GB+ VRAM)",
+        "config": {
+            "training_args": {
+                "per_device_train_batch_size": 4,
+                "gradient_accumulation_steps": 4,
+                "learning_rate": 2e-4,
+                "warmup_steps": 100,
+                "num_train_epochs": 3,
+                "logging_steps": 10,
+                "save_total_limit": 3,
+                "optim": "adamw_torch"
+            },
+            "opensloth_config": {
+                "fast_model_args": {
+                    "load_in_4bit": False,
+                    "max_seq_length": 4096
+                }
+            }
+        }
+    },
+    "memory-efficient": {
+        "description": "Memory-efficient setup for limited VRAM",
+        "config": {
+            "training_args": {
+                "per_device_train_batch_size": 1,
+                "gradient_accumulation_steps": 16,
+                "learning_rate": 1e-4,
+                "warmup_steps": 30,
+                "num_train_epochs": 1,
+                "logging_steps": 5,
+                "save_total_limit": 1,
+                "optim": "adamw_8bit",
+                "dataloader_pin_memory": False
+            },
+            "opensloth_config": {
+                "fast_model_args": {
+                    "load_in_4bit": True,
+                    "max_seq_length": 1024
+                },
+                "sequence_packing": True
+            }
+        }
+    },
 }
 
 def _deep_merge(base: Dict, override: Dict) -> Dict:
@@ -91,7 +169,11 @@ class TrainingConfigBuilder:
                 except Exception:
                     pass
         defaults["opensloth_config"]["devices"] = list(range(gpus))
-        defaults["opensloth_config"]["sequence_packing"] = False
+        # Set sequence_packing default based on training method
+        if self.method == "sft":
+            defaults["opensloth_config"]["sequence_packing"] = True
+        else:
+            defaults["opensloth_config"]["sequence_packing"] = False
         self._merged = defaults
         self._finalised = True
         return self

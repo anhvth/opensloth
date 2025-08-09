@@ -317,7 +317,7 @@ tmux new-session -d -s {session_name} -n MAIN"""
 
     for local_rank, gpu_index in enumerate(gpus):
         cmd = (
-            f"USE_TMUX=0 "
+            f"USE_TMUX=1 "
             f"{get_current_python_path()} {sys.argv[0]} "
             f"{config_file} "
             f"--rank {local_rank} "

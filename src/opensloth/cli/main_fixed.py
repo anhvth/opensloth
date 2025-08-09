@@ -9,7 +9,6 @@ from typing import Optional
 import typer
 from opensloth.config.builder import TrainingConfigBuilder, PrepConfigBuilder, TRAINING_PRESETS
 from opensloth.api import run_training, run_prepare_data
-from opensloth.cli.params import PrepareDataParams, TrainingParams, DebugParams, InfoParams
 
 app = typer.Typer(name="os", add_completion=True, help="OpenSloth CLI")
 
@@ -47,57 +46,36 @@ def prepare_data(
     dry_run: bool = typer.Option(False, "--dry-run"),
     force: bool = typer.Option(False, "--force", "-f"),
 ):
-    # Create params object from CLI arguments
-    params = PrepareDataParams(
-        model=model,
-        method=method,
-        input_file=input_file,
-        dataset=dataset,
-        chat_template=chat_template,
-        target_only=target_only,
-        split=split,
-        samples=samples,
-        max_seq_length=max_seq_length,
-        workers=workers,
-        gpus=gpus,
-        output=output,
-        debug=debug,
-        dry_run=dry_run,
-        force=force,
-    )
-    
-    method_l = params.method.lower()
+    method_l = method.lower()
     if method_l not in {"sft", "dpo", "grpo"}:
         raise typer.Exit(1)
-    actual_dataset = params.input_file or params.dataset
+    actual_dataset = input_file or dataset
     if method_l in {"sft", "grpo"} and not actual_dataset:
         raise typer.Exit(1)
     cfg_builder = PrepConfigBuilder(method=method_l).with_base(
-        tok_name=params.model,
+        tok_name=model,
         dataset_name=actual_dataset,
-        split=params.split,
-        num_samples=params.samples,
-        num_proc=params.workers,
-        max_seq_length=params.max_seq_length,
-        debug=params.debug,
-        gpus=params.gpus,
-        train_on_target_only=bool(params.target_only) if method_l == "sft" else False,
+        split=split,
+        num_samples=samples,
+        num_proc=workers,
+        max_seq_length=max_seq_length,
+        debug=debug,
+        gpus=gpus,
+        train_on_target_only=bool(target_only) if method_l == "sft" else False,
     )
-    if params.chat_template:
-        tpl = CHAT_TEMPLATES.get(params.chat_template)
+    if chat_template:
+        tpl = CHAT_TEMPLATES.get(chat_template)
         if not tpl:
             raise typer.Exit(1)
-        cfg_builder.with_base(chat_template=params.chat_template, instruction_part=tpl["instruction_part"], response_part=tpl["response_part"], train_on_target_only=tpl["train_on_target_only"])
+        cfg_builder.with_base(chat_template=chat_template, instruction_part=tpl["instruction_part"], response_part=tpl["response_part"], train_on_target_only=tpl["train_on_target_only"])
     config = cfg_builder.build()
-    if not params.output:
+    if not output:
         base = (actual_dataset or method_l).split("/")[-1]
-        output = f"data/{method_l}_{base}_n{params.samples if params.samples>0 else 'all'}"
-    else:
-        output = params.output
+        output = f"data/{method_l}_{base}_n{samples if samples>0 else 'all'}"
     config["output_dir"] = output
-    if Path(output).exists() and not params.force:
+    if Path(output).exists() and not force:
         raise typer.Exit(1)
-    if params.dry_run:
+    if dry_run:
         typer.echo(json.dumps(config, indent=2))
         return
     Path(output).parent.mkdir(parents=True, exist_ok=True)
@@ -126,10 +104,9 @@ def train(
     tmux_session: Optional[str] = typer.Option(None, "--tmux-session"),
     tmux_auto_kill: bool = typer.Option(False, "--tmux-auto-kill/--no-tmux-auto-kill"),
 ):
-    # Create params object from CLI arguments
-    params = TrainingParams(
-        dataset=dataset,
-        method=method,
+    if not Path(dataset).exists():
+        raise typer.Exit(1)
+    cli_args = dict(
         model=model,
         output=output,
         epochs=epochs,
@@ -142,44 +119,22 @@ def train(
         full_finetune=full_finetune,
         lora_r=lora_r,
         lora_alpha=lora_alpha,
-        preset=preset,
-        dry_run=dry_run,
-        use_tmux=use_tmux,
-        tmux_session=tmux_session,
-        tmux_auto_kill=tmux_auto_kill,
-    )
-    
-    if not Path(params.dataset).exists():
-        raise typer.Exit(1)
-    cli_args = dict(
-        model=params.model,
-        output=params.output,
-        epochs=params.epochs,
-        max_steps=params.max_steps,
-        batch_size=params.batch_size,
-        grad_accum=params.grad_accum,
-        learning_rate=params.learning_rate,
-        max_seq_length=params.max_seq_length,
-        load_4bit=params.load_4bit,
-        full_finetune=params.full_finetune,
-        lora_r=params.lora_r,
-        lora_alpha=params.lora_alpha,
     )
     builder = (
-        TrainingConfigBuilder(dataset_path=params.dataset, method=params.method)
-        .with_preset(params.preset)
+        TrainingConfigBuilder(dataset_path=dataset, method=method)
+        .with_preset(preset)
         .with_cli_args(**cli_args)
         .infer_from_dataset()
         .finalise()
     )
     opensloth_cfg, train_args = builder.build()
-    if not params.output:
-        train_args.output_dir = _generate_output_dir(opensloth_cfg.fast_model_args.model_name, params.dataset)
+    if not output:
+        train_args.output_dir = _generate_output_dir(opensloth_cfg.fast_model_args.model_name, dataset)
     summary = {"opensloth_config": opensloth_cfg.model_dump(), "training_args": train_args.model_dump()}
-    if params.dry_run:
+    if dry_run:
         typer.echo(json.dumps(summary, indent=2))
         return
-    run_training(opensloth_cfg, train_args, use_tmux=params.use_tmux, tmux_session=params.tmux_session, tmux_auto_kill=params.tmux_auto_kill)
+    run_training(opensloth_cfg, train_args, use_tmux=use_tmux, tmux_session=tmux_session, tmux_auto_kill=tmux_auto_kill)
 
 @app.command("list-presets")
 def list_presets():
@@ -230,13 +185,10 @@ def dataset_info(
     path: str = typer.Argument(help="Path to processed dataset directory")
 ):
     """📖 Show information about a processed dataset"""
-    # Create params object from CLI arguments
-    params = InfoParams(path=path)
-    
-    dataset_path = Path(params.path)
+    dataset_path = Path(path)
     
     if not dataset_path.exists():
-        typer.echo(f"❌ Dataset directory not found: {params.path}", err=True)
+        typer.echo(f"❌ Dataset directory not found: {path}", err=True)
         raise typer.Exit(1)
     
     # Load dataset info
@@ -254,7 +206,7 @@ def dataset_info(
             info.update(dataset_info_data)
     
     if not info:
-        typer.echo(f"❌ No dataset information found in {params.path}", err=True)
+        typer.echo(f"❌ No dataset information found in {path}", err=True)
         raise typer.Exit(1)
     
     # Display information
@@ -279,19 +231,16 @@ def debug_dataset(
     This command helps you understand how your data will be processed during training.
     """
     
-    # Create params object from CLI arguments
-    params = DebugParams(dataset=dataset, samples=samples)
-    
     try:
         from datasets import load_from_disk
         from transformers import AutoTokenizer
         
-        typer.echo(f"🔍 Analyzing Dataset: {params.dataset}")
+        typer.echo(f"🔍 Analyzing Dataset: {dataset}")
         
         # Validate dataset exists
-        dataset_path = Path(params.dataset)
+        dataset_path = Path(dataset)
         if not dataset_path.exists():
-            typer.echo(f"❌ Dataset not found: {params.dataset}", err=True)
+            typer.echo(f"❌ Dataset not found: {dataset}", err=True)
             raise typer.Exit(1)
         
         # Load dataset configuration
@@ -310,7 +259,7 @@ def debug_dataset(
         typer.echo(f"📋 Features: {', '.join(dataset_ds.column_names)}")
         
         # Show a few samples
-        num_to_show = min(params.samples, len(dataset_ds))
+        num_to_show = min(samples, len(dataset_ds))
         typer.echo(f"\n🔍 Showing {num_to_show} sample(s):")
         
         for i in range(num_to_show):
