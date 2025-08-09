@@ -12,12 +12,10 @@ import sys
 from typing import Dict, Any
 from pathlib import Path
 
-# Import from the same directory
-current_dir = Path(__file__).parent
-sys.path.insert(0, str(current_dir))
+# Import from src/opensloth/dataset
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from base_dataset_preparer import BaseDatasetPreparer
-from config_printer import DatasetPreparationConfigPrinter
+from opensloth.dataset.base_dataset_preparer import BaseDatasetPreparer
 
 
 class GRPODatasetPreparer(BaseDatasetPreparer):
@@ -99,223 +97,146 @@ class GRPODatasetPreparer(BaseDatasetPreparer):
             print("[INFO] Standardizing dataset format...")
             from unsloth.chat_templates import standardize_data_formats
             dataset = standardize_data_formats(dataset)
-        
+
         print(f"[INFO] Dataset loaded: {len(dataset)} samples.")
         return dataset
 
-    def extract_answer(self, text: str) -> str:
-        """Extract answer from solution text."""
-        if not text:
-            return ""
-        
-        # Try to extract numeric answer
-        # Remove common prefixes
-        text = re.sub(r'^(the answer is|answer:|solution:)\s*', '', text.strip(), flags=re.IGNORECASE)
-        
-        # Look for #### pattern (GSM8K style)
-        hash_match = re.search(r'####\s*(.*?)(?:\n|$)', text)
-        if hash_match:
-            return hash_match.group(1).strip()
-        
-        # Look for numbers in the text
-        number_match = re.search(r'([-]?\d+(?:\.\d+)?(?:,\d{3})*)', text)
-        if number_match:
-            return number_match.group(1).replace(',', '')
-        
-        # Return first 50 chars as fallback
-        return text[:50].strip()
+    def post_process_text(self, text: str) -> str:
+        """Post-process formatted text for GRPO."""
+        # Remove <bos> token if present
+        text = text.removeprefix('<bos>')
+        return text
 
     def format_conversations(self, dataset):
         """Format conversations for GRPO training."""
         print("[INFO] Formatting conversations for GRPO training...")
         
         def formatting_prompts_func(examples):
-            if "conversations" in examples:
-                # HuggingFace format
-                convos = examples["conversations"]
-                prompts = []
-                answers = []
-                
-                for convo in convos:
-                    # Extract user message as prompt
-                    user_msg = None
-                    assistant_msg = None
-                    
-                    for msg in convo:
-                        if msg.get("role") == "user":
-                            user_msg = msg.get("content", "")
-                        elif msg.get("role") == "assistant":
-                            assistant_msg = msg.get("content", "")
-                    
-                    if user_msg:
-                        # Create prompt with system message
-                        prompt_msgs = [
-                            {"role": "system", "content": self.args.system_prompt},
-                            {"role": "user", "content": user_msg}
-                        ]
-                        prompt = self.tokenizer.apply_chat_template(
-                            prompt_msgs, tokenize=False, add_generation_prompt=True
-                        )
-                        prompts.append(prompt)
-                        
-                        # Extract answer from assistant response
-                        answer = self.extract_answer(assistant_msg or "")
-                        answers.append(answer)
-                    else:
-                        prompts.append("")
-                        answers.append("")
-                
-                return {"prompt": prompts, "answer": answers}
+            prompts = []
             
-            elif "messages" in examples:
-                # Local format
-                all_messages = examples["messages"]
-                prompts = []
-                answers = []
-                
-                for messages in all_messages:
-                    user_msg = None
-                    assistant_msg = None
-                    
-                    for msg in messages:
-                        if msg.get("role") == "user":
-                            user_msg = msg.get("content", "")
-                        elif msg.get("role") == "assistant":
-                            assistant_msg = msg.get("content", "")
-                    
-                    if user_msg:
-                        # Create prompt with system message
-                        prompt_msgs = [
-                            {"role": "system", "content": self.args.system_prompt},
-                            {"role": "user", "content": user_msg}
-                        ]
-                        prompt = self.tokenizer.apply_chat_template(
-                            prompt_msgs, tokenize=False, add_generation_prompt=True
-                        )
-                        prompts.append(prompt)
-                        
-                        # Extract answer from assistant response
-                        answer = self.extract_answer(assistant_msg or "")
-                        answers.append(answer)
-                    else:
-                        prompts.append("")
-                        answers.append("")
-                
-                return {"prompt": prompts, "answer": answers}
-            
-            elif "prompt" in examples and self.args.extract_answer_field in examples:
-                # Direct prompt/answer format
-                prompts = []
-                answers = []
+            # Handle different dataset formats
+            if "prompt" in examples and self.args.extract_answer_field in examples:
+                # Direct prompt/solution format (like DAPO-Math)
+                print(f"[INFO] Using direct prompt/{self.args.extract_answer_field} format")
                 
                 for prompt, solution in zip(examples["prompt"], examples[self.args.extract_answer_field]):
-                    # Format prompt with system message
-                    prompt_msgs = [
+                    # Create a conversation with system prompt and user question
+                    conversation = [
                         {"role": "system", "content": self.args.system_prompt},
                         {"role": "user", "content": prompt}
                     ]
-                    formatted_prompt = self.tokenizer.apply_chat_template(
-                        prompt_msgs, tokenize=False, add_generation_prompt=True
-                    )
-                    prompts.append(formatted_prompt)
                     
-                    # Extract answer
-                    answer = self.extract_answer(solution or "")
-                    answers.append(answer)
+                    # Format as prompt for GRPO (no assistant response - that's generated during training)
+                    formatted_prompt = self.tokenizer.apply_chat_template(
+                        conversation, 
+                        tokenize=False, 
+                        add_generation_prompt=True
+                    )
+                    formatted_prompt = self.post_process_text(formatted_prompt)
+                    prompts.append(formatted_prompt)
                 
-                return {"prompt": prompts, "answer": answers}
+                return {"prompt": prompts}
+            
+            elif "conversations" in examples or "messages" in examples:
+                # Standard conversation format - extract prompts
+                conversations_key = "conversations" if "conversations" in examples else "messages"
+                all_conversations = examples[conversations_key]
+                
+                for conversation in all_conversations:
+                    # Extract just the user messages to create prompts
+                    user_messages = []
+                    for msg in conversation:
+                        if msg.get("role") == "user" or msg.get("from") == "human":
+                            user_messages.append({"role": "user", "content": msg["content"] or msg.get("value", "")})
+                    
+                    if user_messages:
+                        # Add system prompt and format
+                        full_conversation = [{"role": "system", "content": self.args.system_prompt}] + user_messages
+                        formatted_prompt = self.tokenizer.apply_chat_template(
+                            full_conversation, 
+                            tokenize=False, 
+                            add_generation_prompt=True
+                        )
+                        formatted_prompt = self.post_process_text(formatted_prompt)
+                        prompts.append(formatted_prompt)
+                    else:
+                        prompts.append("")  # Empty prompt for malformed conversations
+                
+                return {"prompt": prompts}
             
             else:
-                raise ValueError(
-                    "Dataset must have either 'conversations', 'messages', or 'prompt' + "
-                    f"'{self.args.extract_answer_field}' columns"
-                )
+                raise ValueError(f"Dataset must have either 'conversations'/'messages' or 'prompt' and "
+                               f"'{self.args.extract_answer_field}' columns")
         
         dataset = dataset.map(formatting_prompts_func, batched=True)
         print("[INFO] GRPO formatting complete.")
         return dataset
 
     def tokenize_and_prepare_labels(self, dataset):
-        """For GRPO, we only need prompts and answers - no pre-tokenization needed."""
-        print("[INFO] Preparing GRPO dataset (prompts + answers only)...")
+        """For GRPO, we only need tokenized prompts - no labels."""
+        print("[INFO] Tokenizing prompts for GRPO training...")
         
-        # Filter out empty prompts/answers
-        def filter_valid(example):
-            return bool(example.get("prompt", "").strip()) and bool(example.get("answer", "").strip())
-        
-        data = dataset.filter(filter_valid)
-        
-        # Add some basic stats
-        def add_stats(example):
-            prompt_len = len(self.tokenizer(example["prompt"])["input_ids"])
+        def process_one(example):
+            prompt = example["prompt"]
+            # Tokenize the prompt only
+            tokenized = self.tokenizer(prompt, truncation=True, max_length=self.args.max_seq_length)
+            
             return {
-                **example,
-                "prompt_length": prompt_len,
-                "answer_length": len(example["answer"]),
+                "prompt": prompt,
+                "input_ids": tokenized["input_ids"],
+                "attention_mask": tokenized["attention_mask"],
             }
         
-        data = data.map(add_stats)
+        data = dataset.map(process_one, num_proc=self.args.num_proc)
+        
+        # Filter out prompts that are too long
+        data = self.filter_dataset(data)
         
         self._last_size = len(data)
-        print(f"[INFO] GRPO dataset ready. Valid samples: {self._last_size}")
-        
-        # Print some stats
-        if self._last_size > 0:
-            avg_prompt_len = sum(data["prompt_length"]) / len(data)
-            avg_answer_len = sum(data["answer_length"]) / len(data)
-            print(f"[INFO] Average prompt length: {avg_prompt_len:.1f} tokens")
-            print(f"[INFO] Average answer length: {avg_answer_len:.1f} characters")
-        
+        print(f"[INFO] GRPO tokenization complete. Dataset size: {self._last_size}")
         return data
 
-    def debug_visualization(self, data):
-        """Create debug visualization for GRPO dataset."""
-        if self.args.debug > 0:
-            print(f"[INFO] Debug mode: showing {min(self.args.debug, len(data))} GRPO samples...")
-            
-            for i in range(min(self.args.debug, len(data))):
-                sample = data[i]
-                print(f"\n--- Sample {i+1} ---")
-                print(f"Prompt ({sample.get('prompt_length', '?')} tokens):")
-                print(sample["prompt"][:200] + "..." if len(sample["prompt"]) > 200 else sample["prompt"])
-                print(f"\nExpected Answer: {sample['answer']}")
-                print("-" * 50)
+    def filter_dataset(self, data):
+        """Filter out examples that are too long."""
+        max_length = self.args.max_seq_length
+        
+        def should_keep(example):
+            return len(example["input_ids"]) <= max_length
+        
+        print(f"[INFO] Filtering dataset: max_seq_length={max_length}")
+        filtered_data = data.filter(should_keep, num_proc=self.args.num_proc)
+        
+        # Report filtering statistics
+        original_count = len(data)
+        filtered_count = len(filtered_data)
+        removed_count = original_count - filtered_count
+        
+        if removed_count > 0:
+            print(f"[INFO] Filtered out {removed_count}/{original_count} examples ({removed_count/original_count*100:.1f}%) that were too long (>{max_length} tokens)")
+        
+        return filtered_data
 
-    def save_dataset(self, data):
-        """Save GRPO dataset with metadata."""
-        if self.args.debug <= 0:
-            print(f"[INFO] Saving GRPO dataset to {self.args.output_dir} ...")
-            data.save_to_disk(self.args.output_dir)
-            
-            # Save GRPO-specific metadata
-            try:
-                meta = self._build_metadata()
-                meta.update({
-                    "training_type": "grpo",
-                    "extract_answer_field": self.args.extract_answer_field,
-                    "system_prompt": self.args.system_prompt,
-                })
-                
-                with open(os.path.join(self.args.output_dir, "metadata.json"), "w", encoding="utf-8") as f:
-                    json.dump(meta, f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                print(f"[WARN] Failed to write metadata.json: {e}")
-            
-            # Save complete config
-            try:
-                complete_config = vars(self.args).copy()
-                complete_config['model_family'] = 'GRPO'
-                complete_config['training_type'] = 'grpo'
-                
-                with open(os.path.join(self.args.output_dir, "dataset_config.json"), "w", encoding="utf-8") as f:
-                    json.dump(complete_config, f, ensure_ascii=False, indent=2)
-                print(f"[INFO] GRPO config saved to {self.args.output_dir}/dataset_config.json")
-            except Exception as e:
-                print(f"[WARN] Failed to write dataset_config.json: {e}")
-            
-            print(f"[INFO] GRPO dataset saved to {self.args.output_dir}")
+    def _build_metadata(self):
+        """Build metadata for the GRPO dataset."""
+        return {
+            "model_family": "GRPO",
+            "training_type": "grpo",
+            "tokenizer": self.args.tok_name,
+            "chat_template": self.args.chat_template,
+            "max_seq_length": self.args.max_seq_length,
+            "dataset_name": self.args.dataset_name,
+            "split": self.args.split,
+            "num_samples": getattr(self, '_last_size', -1),
+            "extract_answer_field": self.args.extract_answer_field,
+            "system_prompt": self.args.system_prompt,
+            "train_on_target_only": False,  # GRPO doesn't use target masking
+            "processing_complete": True
+        }
 
-
-if __name__ == "__main__":
+def main():
+    """Main function for standalone execution."""
     preparer = GRPODatasetPreparer()
     preparer.run()
+
+if __name__ == "__main__":
+    main()

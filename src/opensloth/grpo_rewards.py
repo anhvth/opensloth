@@ -6,6 +6,7 @@ Provides pluggable reward functions for different types of tasks (math, coding, 
 import re
 from typing import Callable, Dict, List, Any
 from abc import ABC, abstractmethod
+import random
 
 
 class RewardFunction(ABC):
@@ -283,19 +284,26 @@ class CodeCorrectnessReward(RewardFunction):
 class DemoReward(RewardFunction):
     """
     Demo reward function that provides periodic sample output during training.
-    Similar to the demonstration function in the reference Unsloth GRPO tutorial.
+    Prints either every N calls or randomly with a given percentage.
     """
     
-    def __init__(self, print_every: int = 5):
+    def __init__(self, print_every: int = 5, print_probability: float = 0.2, use_random: bool = True):
         super().__init__("demo_reward", "Provides demonstration output during training")
         self.print_every = print_every
+        self.print_probability = print_probability
+        self.use_random = use_random
         self.call_count = 0
     
     def __call__(self, prompts, completions, **kwargs) -> List[float]:
         self.call_count += 1
         
-        # Provide demonstration output every N calls
-        if self.call_count % self.print_every == 0:
+        should_print = False
+        if self.use_random:
+            should_print = random.random() < self.print_probability
+        else:
+            should_print = self.call_count % self.print_every == 0
+        
+        if should_print:
             self._print_sample_output(prompts, completions, **kwargs)
         
         # Return neutral scores (this is primarily for demonstration)
@@ -310,7 +318,6 @@ class DemoReward(RewardFunction):
         print(f"🎲 GRPO Sample Output (Reward Call #{self.call_count})")
         print("=" * 80)
         
-        # Show first prompt and completion
         try:
             # Extract prompt content
             if isinstance(prompts[0], list) and len(prompts[0]) > 0:
@@ -336,8 +343,6 @@ class DemoReward(RewardFunction):
             print(f"\n📊 Stats:")
             print(f"  • Response Length: {len(completion_text)} chars")
             print(f"  • Question Length: {len(prompt_text)} chars")
-            
-            # Count generations in this batch
             print(f"  • Batch Size: {len(completions)} generations")
             
         except Exception as e:

@@ -65,4 +65,4 @@
 # (opensloth) ➜  opensloth git:(dev/improve-usage) ✗ 
 os prepare-data --method grpo --dataset "open-r1/DAPO-Math-17k-Processed" --split "en" --samples 10000 --model "unsloth/Qwen2.5-7B-Instruct" --output data/grpo_final_test --yes  -f
 
-os train data/grpo_final_test --method grpo --gpus 0,1,2,3 -m hf-models/unsloth/Qwen3-4B-Base-bnb-4bit/ --yes --use-tmux --grpo-max-tokens 2048 --grpo-group-size 16 --batch-size 16 --grpo-task-type math
+os train data/grpo_final_test --method grpo --gpus 0,1,2,3 -m hf-models/unsloth/Qwen3-4B-Base-bnb-4bit/ --yes --use-tmux --grpo-max-tokens 2048 --grpo-group-size 4 --batch-size 1 --grpo-task-type math --epochs 1 --grad-accum 1

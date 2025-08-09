@@ -522,14 +522,22 @@ def _get_trainer(
     from datasets import load_from_disk
 
     logger = get_opensloth_logger()
-    logger.info(f"Loading dataset from {opensloth_config.data_cache_path}")
+    base_path = opensloth_config.data_cache_path
+    local_rank = int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0"))
+    shard_path = os.path.join(base_path, f"shard_{local_rank}")
+    if os.path.isdir(shard_path):
+        logger.info(f"Loading rank-specific shard dataset from {shard_path}")
+        dataset_load_path = shard_path
+    else:
+        logger.info(f"Shard path {shard_path} not found. Falling back to base dataset path {base_path}")
+        dataset_load_path = base_path
 
     try:
-        train_dataset = load_from_disk(opensloth_config.data_cache_path)
+        train_dataset = load_from_disk(dataset_load_path)
 
         # Dataset compatibility check (best-effort)
         _validate_dataset_compatibility(
-            opensloth_config.data_cache_path,
+            base_path,
             opensloth_config.fast_model_args.max_seq_length,
         )
 
@@ -606,24 +614,17 @@ def _create_trainer(
 
     # Apply UNIVERSAL patches that all trainers need for multi-GPU
     logger.start_timing("universal_patch")
-    from opensloth.patching.patch_sampler import patch_sampler
-    from .patching.get_batch_samples import patch_get_batch_samples
-
     _configure_batch_size(hf_train_args)
-
-
-    # These patches ensure correct data distribution in multi-GPU settings
-    patch_get_batch_samples(opensloth_config)
-    trainer = patch_sampler(trainer)  # type: ignore
+    # Removed custom sampler & batch patching: pre-sharded datasets handle per-rank isolation.
     logger.finish_timing("universal_patch")
 
     # Apply SFT-specific patches (inner loop, etc.)
     if opensloth_config.training_type == "sft":
         logger.start_timing("sft_specific_patch")
         from opensloth.patching.inner_training_loop import patch_inner_training_loop_for_sft
-        from opensloth.patching.patch_log import patch_log
+        from opensloth.patching.patch_log import patch_log_for_sft
 
-        patch_log(trainer)
+        patch_log_for_sft(trainer)
         patch_inner_training_loop_for_sft(trainer, opensloth_config.sequence_packing)
         logger.finish_timing("sft_specific_patch")
     else:
@@ -638,16 +639,9 @@ def _create_trainer(
         logger.info("Patched _save to no-op on non-master rank.")
 
     # Always add epoch shuffle callback for visibility (safe for all trainers)
-    from .patching.patch_sampler import ShuffleData
-    if hasattr(trainer, "add_callback"):
-        try:
-            trainer.add_callback(ShuffleData())
-        except Exception:
-            logger.warning("Failed to register ShuffleData callback (non-critical).")
+    # ShuffleData callback removed; per-rank sharded datasets rely on standard sampler behavior.
 
     return trainer
-
-
 
 
 def setup_model_and_training(

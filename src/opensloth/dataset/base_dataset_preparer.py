@@ -44,41 +44,69 @@ class BaseDatasetPreparer(ABC):
     def create_argument_parser(self) -> argparse.ArgumentParser:
         """Create and configure argument parser with common arguments."""
         parser = argparse.ArgumentParser(description=self.get_description())
-        
+
         # Model/tokenizer args
-        parser.add_argument('--tok_name', type=str, default=self.get_default_tokenizer(), 
-                          help='Path to the tokenizer/model directory')
-        parser.add_argument('--chat_template', default=self.get_default_chat_template(), 
-                          help='Chat template to use')
-        
+        parser.add_argument(
+            '--tok_name', type=str, default=self.get_default_tokenizer(),
+            help='Path to the tokenizer/model directory'
+        )
+        parser.add_argument(
+            '--chat_template', default=self.get_default_chat_template(),
+            help='Chat template to use'
+        )
+
         # Dataset args
-        parser.add_argument('--dataset_name', type=str, default=self.get_default_dataset_name(),
-                          help='HuggingFace dataset name or local file path')
-        parser.add_argument('--split', type=str, default='train', 
-                          help='Dataset split to use (for HuggingFace datasets)')
-        
+        parser.add_argument(
+            '--dataset_name', type=str, default=self.get_default_dataset_name(),
+            help='HuggingFace dataset name or local file path'
+        )
+        parser.add_argument(
+            '--split', type=str, default='train',
+            help='Dataset split to use (for HuggingFace datasets)'
+        )
+
         # Processing args
-        parser.add_argument('--num_samples', '-n', type=int, default=-1, 
-                          help='Number of samples to process (use -1 for all)')
-        parser.add_argument('--num_proc', '-wk', type=int, default=8, 
-                          help='Number of processes for mapping')
-        parser.add_argument('--output_dir', '-o', type=str, default=None, 
-                          help='Output directory for the processed dataset')
-        
+        parser.add_argument(
+            '--num_samples', '-n', type=int, default=-1,
+            help='Number of samples to process (use -1 for all)'
+        )
+        parser.add_argument(
+            '--num_proc', '-wk', type=int, default=8,
+            help='Number of processes for mapping'
+        )
+        parser.add_argument(
+            '--output_dir', '-o', type=str, default=None,
+            help='Output directory for the processed dataset'
+        )
+        parser.add_argument(
+            '--gpus', type=int, default=1,
+            help='Number of shards (GPUs) to pre-split the dataset for. Each shard will be saved under shard_<i>.'
+        )
+
         # Training configuration
-        parser.add_argument('--max_seq_length', type=int, default=4096,
-                          help='Maximum sequence length for tokenization (tokens longer than this will be filtered out)')
-        parser.add_argument('--train_on_target_only', action='store_true', default=True,
-                          help='Whether to mask non-assistant tokens for response-only training')
-        parser.add_argument('--instruction_part', type=str, default=self.get_default_instruction_part(),
-                          help='Instruction part string (required if train_on_target_only=True)')
-        parser.add_argument('--response_part', type=str, default=self.get_default_response_part(),
-                          help='Response part string (required if train_on_target_only=True)')
-        
+        parser.add_argument(
+            '--max_seq_length', type=int, default=4096,
+            help='Maximum sequence length for tokenization (tokens longer than this will be filtered out)'
+        )
+        parser.add_argument(
+            '--train_on_target_only', action='store_true', default=True,
+            help='Whether to mask non-assistant tokens for response-only training'
+        )
+        parser.add_argument(
+            '--instruction_part', type=str, default=self.get_default_instruction_part(),
+            help='Instruction part string (required if train_on_target_only=True)'
+        )
+        parser.add_argument(
+            '--response_part', type=str, default=self.get_default_response_part(),
+            help='Response part string (required if train_on_target_only=True)'
+        )
+
         # Debug args
-        parser.add_argument('--debug', type=int, default=0, 
-                          help='If >0, dump this many samples as HTML and use debug mode')
-        
+        parser.add_argument(
+            '--debug', type=int, default=0,
+            help='If >0, dump this many samples as HTML and use debug mode'
+        )
+
         self.add_custom_arguments(parser)
         return parser
     
@@ -351,8 +379,23 @@ class BaseDatasetPreparer(ABC):
     def save_dataset(self, data: datasets.Dataset):
         """Save processed dataset to disk."""
         if self.args.debug <= 0:  # Don't save in debug mode
-            print(f"[INFO] Saving processed dataset to {self.args.output_dir} ...")
-            data.save_to_disk(self.args.output_dir)
+            print(f"[INFO] Saving processed dataset (pre-sharded) to {self.args.output_dir} ...")
+            os.makedirs(self.args.output_dir, exist_ok=True)
+
+            num_shards = max(1, int(getattr(self.args, 'gpus', 1)))
+            # Optional deterministic shuffle before sharding so each shard gets diverse samples
+            if num_shards > 1:
+                try:
+                    data = data.shuffle(seed=42)
+                except Exception:
+                    pass
+
+            for i in range(num_shards):
+                shard_path = os.path.join(self.args.output_dir, f"shard_{i}")
+                shard_dataset = data.shard(num_shards=num_shards, index=i)
+                shard_dataset.save_to_disk(shard_path)
+                print(f"[INFO]  • Saved shard {i}/{num_shards-1} -> {shard_path} ({len(shard_dataset)} samples)")
+
             # save metadata for reproducibility and GUI auto-match
             try:
                 meta = self._build_metadata()
@@ -360,10 +403,12 @@ class BaseDatasetPreparer(ABC):
                     json.dump(meta, f, ensure_ascii=False, indent=2)
             except Exception as e:
                 print(f"[WARN] Failed to write metadata.json: {e}")
-            
-            # Save complete config for debugging and reuse
+
+            # Save complete config for debugging and reuse (include shard info)
             try:
                 complete_config = vars(self.args).copy()
+                complete_config['gpus'] = num_shards  # explicit key for training phase
+                complete_config['num_shards'] = num_shards
                 # Add model family info if available
                 if hasattr(self, '__class__'):
                     if 'Qwen' in self.__class__.__name__:
@@ -374,14 +419,14 @@ class BaseDatasetPreparer(ABC):
                         complete_config['model_family'] = 'Llama'
                     else:
                         complete_config['model_family'] = 'Unknown'
-                
+
                 with open(os.path.join(self.args.output_dir, "dataset_config.json"), "w", encoding="utf-8") as f:
                     json.dump(complete_config, f, ensure_ascii=False, indent=2)
                 print(f"[INFO] Config saved to {self.args.output_dir}/dataset_config.json")
             except Exception as e:
                 print(f"[WARN] Failed to write dataset_config.json: {e}")
-            
-            print(f"[INFO] Dataset saved to {self.args.output_dir}")
+
+            print(f"[INFO] Dataset (with {num_shards} shard(s)) saved to {self.args.output_dir}")
 
     # ------------------------------
     # Metadata & hashing

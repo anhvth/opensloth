@@ -65,7 +65,9 @@ def run_prepare_data(config: dict) -> str:
     method = config.get("training_type", "sft")
     if method == "grpo":
         import importlib.util, pathlib
-        prep_path = pathlib.Path(__file__).resolve().parent.parent / "prepare_dataset" / "prepare_grpo.py"
+        # prepare_grpo.py lives at repository_root/prepare_dataset/prepare_grpo.py (not inside src/opensloth)
+        repo_root = pathlib.Path(__file__).resolve().parents[2]
+        prep_path = repo_root / "prepare_dataset" / "prepare_grpo.py"
         spec = importlib.util.spec_from_file_location("_grpo_prep", prep_path)
         if spec is None or spec.loader is None:
             raise RuntimeError("Could not locate prepare_grpo.py")

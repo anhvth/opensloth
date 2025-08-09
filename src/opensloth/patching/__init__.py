@@ -1,3 +1,1 @@
-from .patch_sampler import patch_sampler
-
-__all__ = ["patch_sampler"]
+__all__: list[str] = []  # Sampler and batch patching removed after dataset pre-sharding refactor.

@@ -206,7 +206,7 @@ def patch_inner_training_loop_for_sft(trainer, sequence_packing):
                 deepspeed_load_checkpoint(
                     self.model_wrapped,
                     resume_from_checkpoint,
-                    load_module_strict=not _is_peft_model(self.model),
+                    load_module_strict=not _is_peft_model(self.model), # type: ignore
                 )
             elif is_sagemaker_mp_enabled() or self.is_fsdp_enabled:
                 self._load_from_checkpoint(resume_from_checkpoint, self.model_wrapped)
@@ -474,7 +474,6 @@ def patch_inner_training_loop_for_sft(trainer, sequence_packing):
                     self.current_flos += float(self.floating_point_ops(inputs))
 
                     if do_sync_step:
-                        import ipdb; ipdb.set_trace()
                         # Since we perform prefetching, we need to manually set sync_gradients to True
                         self.accelerator.gradient_state._set_sync_gradients(True)
 
