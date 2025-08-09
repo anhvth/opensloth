@@ -223,16 +223,32 @@ def _execute_dataset_preparation(config: dict):
     console.print(f"\n🔄 Starting dataset preparation...")
     
     # Lazy import and select preparer
-    DatasetPrepConfig, BaseDatasetPreparer, QwenDatasetPreparer, GemmaDatasetPreparer = _lazy_import_dataset_prep()
-    
-    model_family = _get_model_family(config["tok_name"])
-    if model_family == "qwen":
-        preparer = QwenDatasetPreparer()
-    elif model_family == "gemma":
-        preparer = GemmaDatasetPreparer()
+    if config.get("training_type") == "grpo":
+        # Import GRPO preparer
+        try:
+            import importlib.util
+            import pathlib
+            prep_path = pathlib.Path(__file__).resolve().parent.parent.parent.parent / "prepare_dataset" / "prepare_grpo.py"
+            spec = importlib.util.spec_from_file_location("_grpo_prep", prep_path)
+            if spec is None or spec.loader is None:
+                _fail("Could not locate prepare_grpo.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            preparer = getattr(module, "GRPODatasetPreparer")()
+        except Exception as e:
+            _fail(f"Failed to import GRPO dataset preparer: {e}")
     else:
-        console.print("⚠️  Could not detect model family, defaulting to Qwen", style="yellow")
-        preparer = QwenDatasetPreparer()
+        # Regular SFT preparers
+        DatasetPrepConfig, BaseDatasetPreparer, QwenDatasetPreparer, GemmaDatasetPreparer = _lazy_import_dataset_prep()
+        
+        model_family = _get_model_family(config["tok_name"])
+        if model_family == "qwen":
+            preparer = QwenDatasetPreparer()
+        elif model_family == "gemma":
+            preparer = GemmaDatasetPreparer()
+        else:
+            console.print("⚠️  Could not detect model family, defaulting to Qwen", style="yellow")
+            preparer = QwenDatasetPreparer()
     
     console.print("📝 [bold]Processing Dataset[/bold]")
     console.print("-" * 50)
@@ -243,8 +259,9 @@ def _execute_dataset_preparation(config: dict):
     console.print(f"📁 Dataset saved to: [bold]{output_dir}[/bold]")
     
     # Show next steps
+    training_method = config.get("training_type", "sft")
     console.print(f"\n📝 [bold]Next Steps:[/bold]")
-    console.print(f"1. Train with dataset: [cyan]os train {output_dir}[/cyan]")
+    console.print(f"1. Train with dataset: [cyan]os train {output_dir} --method {training_method}[/cyan]")
     console.print(f"2. Inspect dataset: [cyan]os info {output_dir}[/cyan]")
     
     return output_dir
@@ -254,7 +271,7 @@ def prepare_data(
     # Model (required unless generating example DPO dataset without data sources)
     model: Annotated[str, typer.Option("--model", "-m", help="🤖 HuggingFace model identifier (REQUIRED for SFT and for DPO training; can be placeholder for example DPO generation)")],
     # Method
-    method: Annotated[str, typer.Option("--method", "-M", help="🎯 Dataset type: sft or dpo", rich_help_panel="Mode")] = "sft",
+    method: Annotated[str, typer.Option("--method", "-M", help="🎯 Dataset type: sft | dpo | grpo", rich_help_panel="Mode")] = "sft",
     
     # Data source (one is required)
     input_file: Annotated[Optional[str], typer.Argument(help="📄 Local JSON/JSONL file, or use --dataset for HuggingFace")] = None,
@@ -305,11 +322,14 @@ def prepare_data(
     
     try:
         method_l = method.lower()
-        if method_l not in {"sft", "dpo"}:
-            _fail("--method must be one of: sft, dpo")
+        if method_l not in {"sft", "dpo", "grpo"}:
+            _fail("--method must be one of: sft, dpo, grpo")
 
         if method_l == "dpo" and (chat_template or target_only or instruction_part or response_part):
             console.print("⚠️  Ignoring chat template / target-only flags for DPO datasets", style="yellow")
+
+        if method_l == "grpo" and (chat_template or target_only or instruction_part or response_part):
+            console.print("⚠️  Ignoring chat template / target-only flags for GRPO datasets", style="yellow")
 
         # Shortcut: generate example DPO dataset
         if method_l == "dpo" and dataset is None and input_file is None:
@@ -333,8 +353,8 @@ def prepare_data(
             return
 
         # SFT requires a data source
-        if method_l == "sft" and not (input_file or dataset):
-            _fail("Must specify either input file or --dataset for SFT")
+        if method_l in ["sft", "grpo"] and not (input_file or dataset):
+            _fail("Must specify either input file or --dataset for SFT/GRPO")
         if input_file and dataset:
             _fail("Cannot specify both input file and --dataset")
 
@@ -348,6 +368,7 @@ def prepare_data(
             "max_seq_length": max_seq_length,
             "debug": debug,
             "train_on_target_only": bool(target_only) if method_l == "sft" else False,
+            "training_type": method_l,  # Add training type for preparer selection
         }
         if input_file:
             config["input_file"] = input_file
@@ -381,6 +402,9 @@ def prepare_data(
             if method_l == "dpo":
                 base = (actual_dataset or "dpo").split("/")[-1]
                 output = f"data/dpo_{base}_n{samples if samples>0 else 'all'}"
+            elif method_l == "grpo":
+                base = (actual_dataset or "grpo").split("/")[-1]
+                output = f"data/grpo_{base}_n{samples if samples>0 else 'all'}"
             else:
                 output = f"data/{_generate_dataset_name(model, actual_dataset, samples, max_seq_length)}"
         if os.path.exists(output) and not force:
@@ -728,7 +752,7 @@ def _print_training_config_summary(config: dict, dataset_path: str):
 def train_model(
     # Required
     dataset: Annotated[str, typer.Argument(help="📊 Path to processed dataset directory")],
-    method: Annotated[str, typer.Option("--method", "-M", help="🎯 Training method: sft or dpo")] = "sft",
+    method: Annotated[str, typer.Option("--method", "-M", help="🎯 Training method: sft | dpo | grpo")] = "sft",
     
     # Model (auto-detect from dataset if not specified)
     model: Annotated[Optional[str], typer.Option("--model", "-m", help="🤖 Model (auto-detect from dataset if not specified)")] = None,
@@ -753,6 +777,13 @@ def train_model(
     # LoRA settings
     lora_r: Annotated[Optional[int], typer.Option("--lora-r", help="🎯 LoRA rank")] = None,
     lora_alpha: Annotated[Optional[int], typer.Option("--lora-alpha", help="🎯 LoRA alpha")] = None,
+    
+    # GRPO-specific settings
+    grpo_task_type: Annotated[Optional[str], typer.Option("--grpo-task-type", help="🎯 GRPO task type: math | code | general | reasoning")] = None,
+    grpo_group_size: Annotated[Optional[int], typer.Option("--grpo-group-size", help="👥 Number of responses per prompt")] = None,
+    grpo_temperature: Annotated[Optional[float], typer.Option("--grpo-temp", help="🌡️ GRPO sampling temperature")] = None,
+    grpo_max_new_tokens: Annotated[Optional[int], typer.Option("--grpo-max-tokens", help="📝 Max new tokens for GRPO generation")] = None,
+    grpo_reward_functions: Annotated[Optional[str], typer.Option("--grpo-rewards", help="🏆 Comma-separated reward function names")] = None,
     
     # Preset and utility
     preset: Annotated[Optional[str], typer.Option("--preset", help="⚙️ Use preset configuration")] = None,
@@ -788,8 +819,8 @@ def train_model(
     
     try:
         method_l = method.lower()
-        if method_l not in {"sft", "dpo"}:
-            _fail("--method must be one of: sft, dpo")
+        if method_l not in {"sft", "dpo", "grpo"}:
+            _fail("--method must be one of: sft, dpo, grpo")
 
         # Dataset path resolution / interactive select
         if not os.path.exists(dataset):
@@ -863,6 +894,42 @@ def train_model(
             if learning_rate is None and "learning_rate" not in config["training_args"]:
                 config["training_args"]["learning_rate"] = 5e-6
             config["opensloth_config"]["dpo_args"] = {"beta": 0.1, "max_length": 1024, "max_prompt_length": 512}
+        elif method_l == "grpo":
+            # Disable sequence packing; adjust default LR if not set
+            config["opensloth_config"]["sequence_packing"] = False
+            if learning_rate is None and "learning_rate" not in config["training_args"]:
+                config["training_args"]["learning_rate"] = 5e-6
+            
+            # Configure GRPO args with enhanced options
+            grpo_config = {
+                "group_size": grpo_group_size if grpo_group_size is not None else 4,
+                "max_new_tokens": grpo_max_new_tokens if grpo_max_new_tokens is not None else 256,
+                "temperature": grpo_temperature if grpo_temperature is not None else 1.0,
+                "top_p": 0.9,
+                "top_k": None,
+                "min_p": 0.1,
+                "kl_coef": 0.05,
+                
+                # Task-specific configuration
+                "task_type": grpo_task_type if grpo_task_type is not None else "general",
+                "reward_functions": grpo_reward_functions.split(",") if grpo_reward_functions else [],
+                "use_custom_chat_template": True,
+                
+                # Prompt processing
+                "max_prompt_length": 512,
+                "prompt_length_percentile": 0.9,
+                
+                # Training control
+                "eval_interval": 50,
+                "save_interval": 100,
+                "print_sample_every": 10,
+                
+                # vLLM settings
+                "stop_sequences": [],
+                "include_stop_str_in_output": True,
+            }
+            
+            config["opensloth_config"]["grpo_args"] = grpo_config
 
         final_model = config["opensloth_config"]["fast_model_args"]["model_name"]
         if not output:
@@ -1157,6 +1224,50 @@ def dataset_info(
     console.print(f"• Dataset prepared for [cyan]{model_family}[/cyan] model family")
     console.print(f"• Training models must support max_seq_length >= {dataset_config.get('max_seq_length', 'unknown')}")
 
+
+@app.command("list-rewards")
+def list_reward_functions():
+    """
+    🏆 List available GRPO reward functions
+    
+    Shows all available reward functions for GRPO training with descriptions and task presets.
+    """
+    try:
+        from opensloth.grpo_rewards import list_reward_functions, create_reward_preset
+        
+        _print_header("🏆 [bold]Available GRPO Reward Functions[/bold]")
+        
+        # List all reward functions
+        reward_funcs = list_reward_functions()
+        console.print("📋 [bold]Individual Reward Functions:[/bold]")
+        
+        # Import to get descriptions
+        from opensloth.grpo_rewards import _REWARD_REGISTRY
+        
+        for name in reward_funcs:
+            func = _REWARD_REGISTRY[name]
+            console.print(f"  • [cyan]{name}[/cyan]: {func.description}")
+        
+        # Show task presets
+        console.print("\n🎯 [bold]Task Presets:[/bold]")
+        
+        task_types = ["math", "code", "general", "reasoning"]
+        for task_type in task_types:
+            try:
+                preset_funcs = create_reward_preset(task_type)
+                console.print(f"  • [cyan]{task_type}[/cyan]: {', '.join(preset_funcs)}")
+            except ValueError:
+                pass
+        
+        console.print("\n💡 [bold]Usage Examples:[/bold]")
+        console.print("• [cyan]os train data/math_dataset --method grpo --grpo-task-type math[/cyan]")
+        console.print("• [cyan]os train data/code_dataset --method grpo --grpo-task-type code[/cyan]") 
+        console.print("• [cyan]os train data/dataset --method grpo --grpo-rewards math_format,length_penalty[/cyan]")
+        
+    except ImportError as e:
+        _fail(f"Could not import GRPO reward functions: {e}")
+
+
 # ============================================================================
 # MAIN
 # ============================================================================
@@ -1186,6 +1297,7 @@ def main_callback(
         console.print("• [cyan]os list-datasets[/cyan] - List available datasets")
         console.print("• [cyan]os list-templates[/cyan] - List chat templates")
         console.print("• [cyan]os list-presets[/cyan] - List training presets")
+        console.print("• [cyan]os list-rewards[/cyan] - List GRPO reward functions")
         console.print("• [cyan]os info[/cyan] - Show dataset information")
         console.print("\nUse [cyan]os [command] --help[/cyan] for detailed help")
 

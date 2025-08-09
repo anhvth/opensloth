@@ -50,6 +50,41 @@ class DPOArgs(BaseModel):
         extra = "allow"
 
 
+class GRPOArgs(BaseModel):
+    """Configuration for GRPO (Group Relative Policy Optimization) with configurable rewards.
+
+    This supports different task types (math, code, general) with appropriate reward functions.
+    """
+    group_size: int = Field(default=4, description="Number of sampled responses per prompt")
+    max_new_tokens: int = Field(default=128, description="Max new tokens to sample per response")
+    temperature: float = Field(default=1.0, description="Sampling temperature")
+    top_p: float = Field(default=0.9, description="Nucleus sampling top_p")
+    top_k: int | None = Field(default=None, description="Top-k sampling (None = disabled)")
+    min_p: float = Field(default=0.1, description="Minimum probability threshold")
+    kl_coef: float = Field(default=0.05, description="KL coefficient vs reference policy")
+    
+    # Task-specific configuration
+    task_type: str = Field(default="general", description="Task type: 'math', 'code', 'general', 'reasoning'")
+    reward_functions: list[str] = Field(default_factory=list, description="List of reward function names to apply (auto-selected if empty)")
+    use_custom_chat_template: bool = Field(default=True, description="Use task-specific chat template")
+    
+    # Prompt processing
+    max_prompt_length: int = Field(default=512, description="Maximum prompt token length (truncation boundary)")
+    prompt_length_percentile: float = Field(default=0.9, description="Percentile for automatic prompt length filtering")
+    
+    # Training control  
+    eval_interval: int = Field(default=200, description="Steps between live preview / eval events")
+    save_interval: int = Field(default=500, description="Steps between adapter/model saves")
+    print_sample_every: int = Field(default=5, description="Print sample generations every N steps")
+    
+    # vLLM sampling parameters
+    stop_sequences: list[str] = Field(default_factory=list, description="Additional stop sequences for generation")
+    include_stop_str_in_output: bool = Field(default=True, description="Include stop string in vLLM output")
+    
+    class Config:
+        extra = "allow"
+
+
 class LoraArgs(BaseModel):
     """Configuration for LoRA parameters in PEFT."""
 
@@ -101,6 +136,10 @@ class OpenSlothConfig(BaseModel):
         default=None,
         description="DPO-specific configuration parameters",
     )
+    grpo_args: GRPOArgs | None = Field(
+        default=None,
+        description="GRPO-specific configuration parameters",
+    )
 
     log_level: Literal["info", "debug"] = Field(
         default="info",
@@ -134,15 +173,26 @@ class OpenSlothConfig(BaseModel):
             raise ValueError("lora_args must be an instance of LoraArgs")
         
         # Validate training type specific configurations
-        if self.training_type == "dpo" and self.dpo_args is None:
-            # Auto-create DPO args with defaults if not provided
-            self.dpo_args = DPOArgs()
-        elif self.training_type != "dpo" and self.dpo_args is not None:
-            raise ValueError("dpo_args should only be specified when training_type is 'dpo'")
-        
-        # For future extensibility - validate other training types
-        if self.training_type in ["kto", "orpo", "grpo"]:
-            raise NotImplementedError(f"Training type '{self.training_type}' is not yet implemented. Currently only 'sft' and 'dpo' are supported.")
+        if self.training_type == "dpo":
+            if self.dpo_args is None:
+                self.dpo_args = DPOArgs()
+            if self.grpo_args is not None:
+                raise ValueError("grpo_args should not be set for DPO training")
+        elif self.training_type == "grpo":
+            if self.grpo_args is None:
+                self.grpo_args = GRPOArgs()
+            if self.dpo_args is not None:
+                raise ValueError("dpo_args should not be set for GRPO training")
+        else:
+            # Clear unrelated args to avoid accidental leakage
+            self.dpo_args = None
+            self.grpo_args = None
+
+        # Still gate not-yet-implemented types (kto, orpo) explicitly
+        if self.training_type in ["kto", "orpo"]:
+            raise NotImplementedError(
+                f"Training type '{self.training_type}' is not yet implemented. Supported: sft, dpo, grpo"
+            )
 
 
 class TrainingArguments(BaseModel):

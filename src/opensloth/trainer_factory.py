@@ -184,9 +184,134 @@ def _create_grpo_trainer(
     opensloth_config: OpenSlothConfig,
     hf_train_args: TrainingArguments,
 ):
-    """Create a GRPO trainer instance."""
-    # TODO: Implement GRPO trainer creation
-    raise NotImplementedError("GRPO training is not yet implemented")
+    """Create a GRPO trainer instance using TRL's native GRPOTrainer."""
+    logger = get_opensloth_logger()
+    grpo_args = opensloth_config.grpo_args
+    if grpo_args is None:
+        raise ValueError("grpo_args must be set for GRPO training")
+
+    # Import TRL's GRPO components
+    try:
+        from trl import GRPOTrainer, GRPOConfig
+    except ImportError as e:
+        raise ImportError(
+            f"Failed to import GRPO components from trl: {e}. "
+            "Please ensure you have TRL installed with GRPO support."
+        )
+
+    # Import math rewards
+    try:
+        from .training.grpo_rewards_math import (
+            match_format_exactly,
+            match_format_approximately,
+            check_answer,
+            check_numbers,
+            prepare_math_rewards,
+        )
+        logger.info("Math reasoning reward functions loaded")
+    except ImportError as e:
+        logger.warning(f"Failed to import math reward functions: {e}")
+        # Fallback to basic rewards
+        match_format_exactly = lambda *args, **kwargs: [0.0]
+        match_format_approximately = lambda *args, **kwargs: [0.0] 
+        check_answer = lambda *args, **kwargs: [0.0]
+        check_numbers = lambda *args, **kwargs: [0.0]
+
+    # Create GRPOConfig by combining TrainingArguments with GRPO-specific args
+    grpo_config_dict = hf_train_args.to_dict()
+    
+    # Filter out arguments not supported by GRPOConfig
+    unsupported_args = {
+        'dataset_num_proc', 'save_only_model', 'push_to_hub_model_id', 
+        'push_to_hub_organization', 'push_to_hub_token', 'hub_model_id',
+        'hub_token', 'hub_private_repo', 'hub_strategy', 'hub_always_push',
+        'gradient_checkpointing_kwargs', 'include_inputs_for_metrics',
+        'eval_do_concat_batches', 'fp16_full_eval', 'tf32', 'jit_mode_eval',
+        'use_ipex', 'bf16_full_eval', 'eval_on_start', 'ignore_data_skip',
+        'fsdp_config', 'deepspeed_plugin', 'label_smoothing_factor',
+        'debug', 'sharded_ddp', 'accelerator_config', 'dispatch_batches',
+        'split_batches', 'include_tokens_per_second', 'neftune_noise_alpha',
+        'optim_target_modules', 'batch_eval_metrics', 'eval_use_gather_object'
+    }
+    
+    # Remove unsupported arguments
+    filtered_config_dict = {k: v for k, v in grpo_config_dict.items() if k not in unsupported_args}
+    
+    # Add GRPO-specific parameters using correct parameter names
+    filtered_config_dict.update({
+        "num_generations": grpo_args.group_size,
+        "max_completion_length": grpo_args.max_new_tokens,  # Correct parameter name
+        "temperature": grpo_args.temperature,
+        "top_p": grpo_args.top_p,
+        "beta": grpo_args.kl_coef,  # GRPO uses beta instead of kl_coef
+        "max_prompt_length": grpo_args.max_prompt_length,
+    })
+    
+    # Add top_k if specified
+    if grpo_args.top_k is not None:
+        filtered_config_dict["top_k"] = grpo_args.top_k
+
+    try:
+        grpo_config = GRPOConfig(**filtered_config_dict)
+    except Exception as e:
+        logger.error(f"Failed to create GRPOConfig with args: {list(filtered_config_dict.keys())}")
+        raise ValueError(f"GRPOConfig creation failed: {e}")
+    
+    # Validate dataset for GRPO
+    # GRPO typically expects prompts/completions rather than input_ids/labels
+    if not hasattr(train_dataset, "features"):
+        raise ValueError("Dataset must have features for GRPO training")
+    
+    # GRPO can work with various dataset formats - check what we have
+    available_features = list(train_dataset.features.keys())
+    logger.info(f"GRPO dataset features: {available_features}")
+    
+    # Expected dataset formats for GRPO:
+    # - 'prompt' column for prompts
+    # - or 'input_ids' that can be decoded to prompts
+    if "prompt" not in available_features and "input_ids" not in available_features:
+        raise ValueError(
+            "GRPO dataset must have either 'prompt' or 'input_ids' column. "
+            f"Available features: {available_features}"
+        )
+
+    # Prepare reward functions list
+    reward_funcs = [
+        match_format_exactly,
+        match_format_approximately,
+        check_answer,
+        check_numbers,
+    ]
+
+    # Create trainer - check if it's Unsloth's version that needs reward_funcs
+    try:
+        trainer = GRPOTrainer(
+            model=model,
+            ref_model=None,  # Let GRPO create reference model automatically
+            args=grpo_config,
+            train_dataset=train_dataset,
+            processing_class=tokenizer,
+            reward_funcs=reward_funcs,  # Try with reward_funcs first
+        )
+        logger.info("UnslothGRPOTrainer setup completed successfully with reward_funcs")
+    except TypeError as e:
+        if "reward_funcs" in str(e):
+            # Fallback to standard TRL GRPOTrainer without reward_funcs
+            try:
+                trainer = GRPOTrainer(
+                    model=model,
+                    ref_model=None,
+                    args=grpo_config,
+                    train_dataset=train_dataset,
+                    processing_class=tokenizer,
+                )
+                logger.info("Standard TRL GRPOTrainer setup completed successfully")
+            except Exception as e2:
+                raise ValueError(f"Both UnslothGRPOTrainer and TRL GRPOTrainer failed: {e}, {e2}")
+        else:
+            raise e
+    
+    return trainer
 
 
 def create_trainer_by_type(

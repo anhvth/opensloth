@@ -61,9 +61,56 @@ def _import_unsloth(gpu: int) -> None|List[Any]:
             )
         raise
 
+def train_on_single_gpu_grpo(
+    gpu: int, opensloth_config: OpenSlothConfig, hf_train_args: TrainingArguments
+):
+    """
+    GRPO training on a single GPU using native TRL GRPOTrainer + Unsloth.
+    This is a thin wrapper around the Unsloth tutorial pattern.
+    """
+    
+    os.environ["OPENSLOTH_LOCAL_RANK"] = str(opensloth_config.devices.index(gpu))
+    logger = OpenslothLogger()
+    
+    logger.info(f"GRPO training on GPU {gpu} with output_dir {hf_train_args.output_dir}")
+    logger.start_total_training_timer()
+    
+    try:
+        # Setup GRPO training (follows Unsloth tutorial exactly)
+        from opensloth.unsloth_grpo_trainer import setup_grpo_training, run_grpo_training
+        
+        trainer, model, tokenizer = setup_grpo_training(
+            opensloth_config=opensloth_config,
+            hf_train_args=hf_train_args,
+            logger=logger,
+            gpu=gpu
+        )
+        
+        # Run GRPO training with multi-GPU support
+        run_grpo_training(
+            trainer=trainer,
+            model=model,
+            tokenizer=tokenizer,
+            logger=logger,
+            gpu=gpu,
+            opensloth_config=opensloth_config
+        )
+        
+    except Exception as e:
+        logger.error(f"GRPO training failed: {e}")
+        raise
+    
+    # Log training summary
+    logger.log_training_summary()
+
+
 def train_on_single_gpu(
     gpu: int, opensloth_config: OpenSlothConfig, hf_train_args: TrainingArguments
 ):
+    
+    # Route to GRPO-specific implementation if training_type is grpo
+    if opensloth_config.training_type == "grpo":
+        return train_on_single_gpu_grpo(gpu, opensloth_config, hf_train_args)
     
     _import_unsloth(gpu)
     from opensloth.opensloth_trainer_setup import setup_model_and_training
@@ -222,10 +269,34 @@ def train_on_single_gpu(
     logger.debug(f"Environment: {os.environ}")
     # Patch: Only resume from checkpoint if a valid path is provided
     resume_from_checkpoint = getattr(hf_train_args, 'resume_from_checkpoint', None)
-    if resume_from_checkpoint:
-        trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+    if resume_from_checkpoint and hasattr(trainer, "train") and "resume_from_checkpoint" in trainer.train.__code__.co_varnames:  # type: ignore[attr-defined]
+        trainer.train(resume_from_checkpoint=resume_from_checkpoint)  # type: ignore
     else:
-        trainer.train()
+        # GRPO custom path: UnslothGRPOTrainer doesn't accept max_steps in train()
+        if opensloth_config.training_type == "grpo" and hasattr(trainer, "train"):
+            # For GRPO, max_steps should be in the config, not passed to train()
+            try:
+                trainer.train()  # type: ignore
+            except Exception as e:
+                logger.error(f"GRPO training failed: {e}")
+                # Try fallback with max_steps if the trainer supports it
+                try:
+                    max_steps = getattr(hf_train_args, "max_steps", None)
+                    if max_steps is None or max_steps <= 0:
+                        # fallback derive from epochs * dataset size / batch
+                        try:
+                            ds_size = len(getattr(trainer, "train_dataset", []))
+                            per_dev = hf_train_args.per_device_train_batch_size
+                            gas = hf_train_args.gradient_accumulation_steps
+                            max_steps = max(1, int(ds_size / max(1, per_dev * gas)))
+                        except Exception:
+                            max_steps = 100
+                    trainer.train(max_steps=max_steps)  # type: ignore
+                except Exception as e2:
+                    logger.error(f"GRPO training fallback also failed: {e2}")
+                    raise e  # Re-raise original error
+        else:
+            trainer.train()
     logger.finish_timing("actual_training")
 
     # Save once from rank=0

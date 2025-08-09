@@ -165,7 +165,11 @@ def create_trainer(
 
     # Always add epoch shuffle callback for visibility (safe for all trainers)
     from .patching.patch_sampler import ShuffleData
-    trainer.add_callback(ShuffleData())
+    if hasattr(trainer, "add_callback"):
+        try:
+            trainer.add_callback(ShuffleData())
+        except Exception:
+            logger.warning("Failed to register ShuffleData callback (non-critical)")
     return trainer
 
 

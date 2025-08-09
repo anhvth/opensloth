@@ -82,7 +82,11 @@ python train_scripts/train_dpo_example.py
 
 Validate the implementation:
 ```bash
-python test_dpo_implementation.py
+# Test DPO configuration
+os train data/your_dpo_dataset --method dpo --dry-run
+
+# Test SFT configuration
+os train data/your_sft_dataset --method sft --dry-run
 ```
 
 ## 🏗️ Architecture Changes
