@@ -25,6 +25,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.progress import track
 
+from opensloth._debug_dataloader import print_dataloader_example_short
+
 # Main app
 app = typer.Typer(
     name="os",
@@ -883,6 +885,134 @@ def list_presets():
     console.print("\n💡 Use [bold]--preset [name][/bold] with train command")
 
 # ============================================================================
+# DEBUG COMMANDS
+# ============================================================================
+
+@app.command("debug")
+def debug_dataset(
+    dataset: Annotated[str, typer.Argument(help="📊 Path to processed dataset directory")],
+    samples_per_page: Annotated[int, typer.Option("--samples", "-n", help="🔢 Samples per page")] = 3,
+    max_to_print_per_content: Annotated[int, typer.Option("--max-to-print-per-content", "-k", help="Max tokens per example (first 25 + last 25 if exceeded)")] = 50,
+):
+    """🐛 Simple dataset preview (terminal only)
+
+    - Color-coded output (green = context, yellow = trainable) via `print_dataloader_example_short`
+    - Press ENTER for next page, 'q' to quit
+    """
+    try:
+        if not os.path.exists(dataset):
+            _fail(f"Dataset not found: {dataset}")
+
+        # Load dataset configuration to get tokenizer/model name
+        ds_cfg = _load_dataset_config(dataset)
+        tok_name = ds_cfg.get("tok_name")
+        if not tok_name:
+            _fail("Could not determine tokenizer name (tok_name) from dataset_config.json")
+
+        console.print(f"\n🔧 Loading tokenizer: [bold]{tok_name}[/bold]")
+        try:
+            from transformers import AutoTokenizer
+            tokenizer = AutoTokenizer.from_pretrained(tok_name, use_fast=True, trust_remote_code=True)
+        except Exception as e:
+            _fail(f"Failed to load tokenizer '{tok_name}': {e}")
+
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+        # Load dataset
+        console.print(f"📂 Opening dataset at: [bold]{dataset}[/bold]")
+        try:
+            from datasets import load_from_disk
+            ds_or_dict = load_from_disk(dataset)
+        except Exception as e:
+            _fail(f"Failed to load dataset from disk: {e}")
+
+        # Pick split if DatasetDict
+        if hasattr(ds_or_dict, "column_names"):
+            ds = ds_or_dict
+            split_name = "(single split)"
+        else:
+            available_splits = list(ds_or_dict.keys())
+            if not available_splits:
+                _fail("No splits found in dataset")
+            split = "train" if "train" in ds_or_dict else available_splits[0]
+            ds = ds_or_dict[split]
+            split_name = split
+
+        total = len(ds)
+        console.print(f"\n🔎 Split: [bold]{split_name}[/bold] — Samples: [bold]{total}[/bold]")
+        console.print("💡 Press [bold]ENTER[/bold] for next page, type [bold]q[/bold] then Enter to quit.\n")
+
+        # Helper to normalize columns to 1-D Long tensors
+        def _to_1d_long(x):
+            import torch
+            if torch.is_tensor(x):
+                return x.to(dtype=torch.long).view(-1)
+            try:
+                import numpy as np
+                if isinstance(x, np.ndarray):
+                    return torch.as_tensor(x, dtype=torch.long).view(-1)
+            except Exception:
+                pass
+            if isinstance(x, (list, tuple)):
+                # flatten one level if nested
+                if x and isinstance(x[0], (list, tuple)):
+                    x = [t for sub in x for t in sub]
+                return torch.tensor(x, dtype=torch.long).view(-1)
+            return torch.tensor(x, dtype=torch.long).view(-1)
+
+        idx = 0
+        shown = 0
+        while idx < total:
+            end = min(idx + samples_per_page, total)
+            for i in range(idx, end):
+                ex = ds[i]
+                input_ids = ex.get("input_ids")
+                if input_ids is None:
+                    _fail("Dataset does not contain 'input_ids' column")
+                label_ids = ex.get("labels", ex.get("label_ids"))
+                if label_ids is None:
+                    _fail("Dataset does not contain 'labels' or 'label_ids' column")
+
+                # Normalize to tensors to avoid list-vs-int ops
+                input_ids = _to_1d_long(input_ids)
+                label_ids = _to_1d_long(label_ids)
+
+                console.print(f"\n📝 [bold cyan]Sample {i}/{total - 1}[/bold cyan]")
+                try:
+                    print_dataloader_example_short(
+                        tokenizer=tokenizer,
+                        input_ids=input_ids,
+                        label_ids=label_ids,
+                        max_to_print_per_content=max_to_print_per_content,
+                    )
+                except Exception as e:
+                    console.print(f"⚠️  Skipping sample {i} due to error: {e}", style="yellow")
+                    continue
+                shown += 1
+
+            idx = end
+            try:
+                user_in = input("[Enter]=next  |  q=quit > ").strip().lower()
+            except EOFError:
+                break
+            if user_in == "q":
+                break
+
+        console.print(f"\n✅ Done. Shown samples: [bold]{shown}[/bold]")
+
+    except typer.Exit:
+        raise
+    except KeyboardInterrupt:
+        console.print("\n⏹️  Interrupted by user")
+        raise typer.Exit(130)
+    except Exception as e:
+        console.print(f"\n❌ [bold red]Debug error: {e}[/bold red]")
+        raise typer.Exit(1)
+
+
+
+# ============================================================================
 # INFO COMMANDS
 # ============================================================================
 
@@ -975,6 +1105,7 @@ def main_callback(
         console.print("\n📋 [bold]Commands:[/bold]")
         console.print("• [cyan]os prepare-data[/cyan] - Prepare dataset")
         console.print("• [cyan]os train[/cyan] - Train model") 
+        console.print("• [cyan]os debug[/cyan] - Debug dataset with color-coded tokens")
         console.print("• [cyan]os list-datasets[/cyan] - List available datasets")
         console.print("• [cyan]os list-templates[/cyan] - List chat templates")
         console.print("• [cyan]os list-presets[/cyan] - List training presets")

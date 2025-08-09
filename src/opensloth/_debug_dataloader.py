@@ -1,6 +1,6 @@
 import itertools
 import os
-
+import itertools
 
 def _escape_html(text: str) -> str:
     """Escape HTML special characters efficiently."""
@@ -107,53 +107,7 @@ def debug_chat_dataloader_for_training(dataloader, tokenizer, n_example=10):
             batch = next(g)
             input_ids = batch["input_ids"][0]
             label_ids = batch["labels"][0]
-            parts_mask = label_ids >= 0  # True is trainable, False is context
-
-            # Find split points efficiently
-            split_points = _get_split_points(parts_mask)
-
-            colored_parts = []
-            html_parts.append(f"\n    <h2>Example {i+1}</h2>\n")
-            html_parts.append(
-                "    <table>\n        <tr><th>Text</th><th>Label</th></tr>\n"
-            )
-
-            for a, b in itertools.pairwise(split_points):
-                text, is_truncated = _process_token_slice(
-                    input_ids, a, b, tokenizer, max_print_tokens
-                )
-                is_trainable = parts_mask[a]
-                token_count = b - a
-
-                # Colored text for terminal
-                color_code = "\033[93m" if is_trainable else "\033[92m"
-                colored_text = f"{color_code}{text}\033[0m"
-                colored_parts.append(colored_text)
-
-                # HTML with CSS classes
-                css_class = "trainable" if is_trainable else "context"
-                emoji = "🟠" if is_trainable else "🟢"
-                label_text = "TRAIN" if is_trainable else "CONTEXT"
-                token_suffix = "tokens" if token_count > 1 else "token"
-                label = f"{emoji} {label_text} {token_count} {token_suffix}"
-
-                # Escape HTML and add row
-                text_escaped = _escape_html(text)
-                html_parts.append(
-                    f"        <tr>\n"
-                    f'            <td><span class="{css_class}">'
-                    f"{text_escaped}</span></td>\n"
-                    f"            <td>{label}</td>\n"
-                    f"        </tr>\n"
-                )
-
-            html_parts.append("    </table>\n")
-
-            # Print first example to terminal
-            if i == 0:
-                colored_output = "".join(colored_parts)
-                terminal_msg = f"\n=== EXAMPLE #{i+1} ===\n{colored_output}\n"
-                print(terminal_msg)
+            generate_html_dataloader_example(tokenizer, max_print_tokens, html_parts, i, input_ids, label_ids)
 
         # Write all HTML parts at once
         html_file.writelines(html_parts)
@@ -161,47 +115,83 @@ def debug_chat_dataloader_for_training(dataloader, tokenizer, n_example=10):
 
     print(f"More training debug examples written to {html_path}")
 
+def generate_html_dataloader_example(tokenizer, max_print_tokens, html_parts, i, input_ids, label_ids):
+    parts_mask = label_ids >= 0  # True is trainable, False is context
 
-def debug_chat_dataloader_for_training_markdown(dataloader, tokenizer, n_example=10):
+            # Find split points efficiently
+    split_points = _get_split_points(parts_mask)
+
+    colored_parts = []
+    html_parts.append(f"\n    <h2>Example {i+1}</h2>\n")
+    html_parts.append(
+                "    <table>\n        <tr><th>Text</th><th>Label</th></tr>\n"
+            )
+
+    for a, b in itertools.pairwise(split_points):
+        text, is_truncated = _process_token_slice(
+                    input_ids, a, b, tokenizer, max_print_tokens
+                )
+        is_trainable = parts_mask[a]
+        token_count = b - a
+
+                # Colored text for terminal
+        color_code = "\033[93m" if is_trainable else "\033[92m"
+        colored_text = f"{color_code}{text}\033[0m"
+        colored_parts.append(colored_text)
+
+                # HTML with CSS classes
+        css_class = "trainable" if is_trainable else "context"
+        emoji = "🟠" if is_trainable else "🟢"
+        label_text = "TRAIN" if is_trainable else "CONTEXT"
+        token_suffix = "tokens" if token_count > 1 else "token"
+        label = f"{emoji} {label_text} {token_count} {token_suffix}"
+
+                # Escape HTML and add row
+        text_escaped = _escape_html(text)
+        html_parts.append(
+                    f"        <tr>\n"
+                    f'            <td><span class="{css_class}">'
+                    f"{text_escaped}</span></td>\n"
+                    f"            <td>{label}</td>\n"
+                    f"        </tr>\n"
+                )
+
+    html_parts.append("    </table>\n")
+
+            # Print first example to terminal
+    if i == 0:
+        colored_output = "".join(colored_parts)
+        terminal_msg = f"\n=== EXAMPLE #{i+1} ===\n{colored_output}\n"
+        print(terminal_msg)
+
+
+
+def print_dataloader_example_short(tokenizer, input_ids, label_ids, max_to_print_per_content=50):
     """
-    Debug function to log samples from the training dataloader as plain color-coded text (green for trainable, default for context).
-    Prints to terminal and writes to a .log/today_{datetime}.log file. No markdown, no code blocks.
+    Print tokenized example to terminal with colors for trainable vs context.
+    Shows at most `max_to_print_per_content` tokens per example:
+      - If longer, shows first 25 and last 25 tokens.
     """
-    import os
-    from datetime import datetime
-    g = iter(dataloader)
-    now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_path = f".log/today_{now}.log"
-    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    parts_mask = label_ids >= 0  # True = trainable, False = context
+    split_points = _get_split_points(parts_mask)  # same helper as your HTML code
 
-    green = "\033[92m"
-    reset = "\033[0m"
+    colored_parts = []
+    for a, b in itertools.pairwise(split_points):
+        text, _ = _process_token_slice(input_ids, a, b, tokenizer, max_to_print_per_content)
+        is_trainable = parts_mask[a]
+        color_code = "\033[93m" if is_trainable else "\033[92m"  # yellow/green
+        colored_parts.append(f"{color_code}{text}\033[0m")
 
-    lines = []
-    for i in range(n_example):
-        batch = next(g)
-        input_ids = batch["input_ids"][0]
-        label_ids = batch["labels"][0]
-        parts_mask = label_ids >= 0  # True is trainable, False is context
-        split_points = _get_split_points(parts_mask)
+    # Join into a single string of tokens
+    all_tokens = "".join(colored_parts)
 
-        example_lines = [f"=== Example {i+1} ==="]
-        for a, b in itertools.pairwise(split_points):
-            decode_token = input_ids[a:b]
-            text = tokenizer.decode(decode_token, skip_special_tokens=False)
-            is_trainable = parts_mask[a]
-            colored = f"{green}{text}{reset}" if is_trainable else text
-            example_lines.append(colored)
-        example_lines.append("")
-        lines.extend(example_lines)
+    # If too long, truncate to first 25 + last 25
+    if len(colored_parts) > max_to_print_per_content:
+        first = "".join(colored_parts[:25])
+        last = "".join(colored_parts[-25:])
+        all_tokens = f"{first} \033[91m...\033[0m {last}"  # red "..." for truncation
 
-    # Print to terminal
-    print("\n".join(lines))
-    # Write to log file (with color codes)
-    with open(log_path, "w") as f:
-        f.write("\n".join(lines))
-    print(f"Training debug examples written to {log_path}")
+    print(all_tokens)
 
 
-
-__all__ = ["debug_chat_dataloader_for_training", "debug_chat_dataloader_for_training_markdown"]
+__all__ = ["debug_chat_dataloader_for_training"]
