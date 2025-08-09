@@ -38,6 +38,18 @@ def _default_target_modules() -> list[str]:
     ]
 
 
+class DPOArgs(BaseModel):
+    """Configuration for DPO training parameters."""
+    
+    beta: float = Field(default=0.1, description="DPO beta parameter for preference strength")
+    max_length: int = Field(default=1024, description="Maximum sequence length for DPO")
+    max_prompt_length: int = Field(default=512, description="Maximum prompt length for DPO")
+    
+    class Config:
+        """Pydantic configuration for DPOArgs."""
+        extra = "allow"
+
+
 class LoraArgs(BaseModel):
     """Configuration for LoRA parameters in PEFT."""
 
@@ -79,6 +91,16 @@ class OpenSlothConfig(BaseModel):
         default=True,
         description="Disable packing of sequences for training",
     )
+    
+    # Training type and related configurations
+    training_type: Literal["sft", "dpo", "kto", "orpo", "grpo"] = Field(
+        default="sft",
+        description="Type of training to perform: SFT, DPO, KTO, ORPO, or GRPO",
+    )
+    dpo_args: DPOArgs | None = Field(
+        default=None,
+        description="DPO-specific configuration parameters",
+    )
 
     log_level: Literal["info", "debug"] = Field(
         default="info",
@@ -110,6 +132,17 @@ class OpenSlothConfig(BaseModel):
             raise ValueError("devices must be a list of integers")
         if self.lora_args is not None and not isinstance(self.lora_args, LoraArgs):
             raise ValueError("lora_args must be an instance of LoraArgs")
+        
+        # Validate training type specific configurations
+        if self.training_type == "dpo" and self.dpo_args is None:
+            # Auto-create DPO args with defaults if not provided
+            self.dpo_args = DPOArgs()
+        elif self.training_type != "dpo" and self.dpo_args is not None:
+            raise ValueError("dpo_args should only be specified when training_type is 'dpo'")
+        
+        # For future extensibility - validate other training types
+        if self.training_type in ["kto", "orpo", "grpo"]:
+            raise NotImplementedError(f"Training type '{self.training_type}' is not yet implemented. Currently only 'sft' and 'dpo' are supported.")
 
 
 class TrainingArguments(BaseModel):

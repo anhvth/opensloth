@@ -249,8 +249,10 @@ def _execute_dataset_preparation(config: dict):
 
 @app.command("prepare-data")
 def prepare_data(
-    # Model (required)
-    model: Annotated[str, typer.Option("--model", "-m", help="🤖 HuggingFace model identifier (REQUIRED)")],
+    # Model (required unless generating example DPO dataset without data sources)
+    model: Annotated[str, typer.Option("--model", "-m", help="🤖 HuggingFace model identifier (REQUIRED for SFT and for DPO training; can be placeholder for example DPO generation)")],
+    # Method
+    method: Annotated[str, typer.Option("--method", "-M", help="🎯 Dataset type: sft or dpo", rich_help_panel="Mode")] = "sft",
     
     # Data source (one is required)
     input_file: Annotated[Optional[str], typer.Argument(help="📄 Local JSON/JSONL file, or use --dataset for HuggingFace")] = None,
@@ -300,16 +302,41 @@ def prepare_data(
     """
     
     try:
-        # Validate inputs
-        if not input_file and not dataset:
-            _fail("Must specify either input file or --dataset for HuggingFace datasets")
-        
+        method_l = method.lower()
+        if method_l not in {"sft", "dpo"}:
+            _fail("--method must be one of: sft, dpo")
+
+        if method_l == "dpo" and (chat_template or target_only or instruction_part or response_part):
+            console.print("⚠️  Ignoring chat template / target-only flags for DPO datasets", style="yellow")
+
+        # Shortcut: generate example DPO dataset
+        if method_l == "dpo" and dataset is None and input_file is None:
+            try:
+                from prepare_dataset.prepare_dpo_dataset import prepare_dpo_dataset_for_opensloth  # type: ignore
+            except ImportError:
+                # Fallback absolute path import if package not installed
+                import importlib.util, pathlib
+                prep_path = pathlib.Path(__file__).resolve().parent.parent.parent.parent / "prepare_dataset" / "prepare_dpo_dataset.py"
+                spec = importlib.util.spec_from_file_location("_dpo_prep", prep_path)
+                if spec is None or spec.loader is None:
+                    _fail("Could not locate prepare_dpo_dataset.py for DPO example generation")
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)  # type: ignore
+                prepare_dpo_dataset_for_opensloth = getattr(module, "prepare_dpo_dataset_for_opensloth")
+            out_dir = output or "data/dpo_example"
+            if os.path.exists(out_dir) and not force:
+                _fail(f"Output directory exists: {out_dir}. Use --force to overwrite.")
+            prepare_dpo_dataset_for_opensloth(out_dir)
+            console.print(f"\n🚀 Next: os train {out_dir} --method dpo --model {model}")
+            return
+
+        # SFT requires a data source
+        if method_l == "sft" and not (input_file or dataset):
+            _fail("Must specify either input file or --dataset for SFT")
         if input_file and dataset:
             _fail("Cannot specify both input file and --dataset")
-        
-        actual_dataset = input_file if input_file else dataset
-        
-        # Build configuration
+
+        actual_dataset = input_file or dataset
         config = {
             "tok_name": model,
             "dataset_name": actual_dataset,
@@ -318,52 +345,49 @@ def prepare_data(
             "num_proc": workers,
             "max_seq_length": max_seq_length,
             "debug": debug,
-            "train_on_target_only": target_only,
+            "train_on_target_only": bool(target_only) if method_l == "sft" else False,
         }
-        
         if input_file:
             config["input_file"] = input_file
-        
-        # Apply chat template configuration
-        if chat_template:
+
+        if method_l == "sft" and chat_template:
             if chat_template not in CHAT_TEMPLATES:
-                available = ', '.join(CHAT_TEMPLATES.keys())
-                _fail(f"Unknown chat template: {chat_template}\nAvailable: {available}")
-            
-            template_config = CHAT_TEMPLATES[chat_template]
-            config.update({
-                "chat_template": chat_template,
-                "train_on_target_only": template_config["train_on_target_only"],
-                "instruction_part": template_config["instruction_part"],
-                "response_part": template_config["response_part"],
-            })
+                _fail(f"Unknown chat template: {chat_template}. Available: {', '.join(CHAT_TEMPLATES)}")
+            tpl = CHAT_TEMPLATES[chat_template]
+            config.update(
+                {
+                    "chat_template": chat_template,
+                    "train_on_target_only": tpl["train_on_target_only"],
+                    "instruction_part": tpl["instruction_part"],
+                    "response_part": tpl["response_part"],
+                }
+            )
             console.print(f"📋 Applied chat template: [bold]{chat_template}[/bold]")
+
         else:
-            # Manual configuration
             if instruction_part:
                 config["instruction_part"] = instruction_part
             if response_part:
                 config["response_part"] = response_part
-        
-        # Validate target-only configuration with fallback
-        if target_only:
-            if not config.get("instruction_part") or not config.get("response_part"):
-                fallback_applied = _apply_fallback_template(config, model)
-                if not fallback_applied:
-                    _fail("Target-only training requires --chat-template or manual --instruction-part and --response-part")
-        
-        # Setup output directory
+
+        if method_l == "sft" and target_only:
+            if not (config.get("instruction_part") and config.get("response_part")):
+                if not _apply_fallback_template(config, model):
+                    _fail("Target-only requires --chat-template or both --instruction-part & --response-part")
+
         if not output:
-            output = f"data/{_generate_dataset_name(model, actual_dataset, samples, max_seq_length)}"
-        
+            if method_l == "dpo":
+                base = (actual_dataset or "dpo").split("/")[-1]
+                output = f"data/dpo_{base}_n{samples if samples>0 else 'all'}"
+            else:
+                output = f"data/{_generate_dataset_name(model, actual_dataset, samples, max_seq_length)}"
         if os.path.exists(output) and not force:
-            _fail(f"Output directory exists: {output}\nUse --force to overwrite")
-        
+            _fail(f"Output directory exists: {output}. Use --force to overwrite")
         config["output_dir"] = output
-        
-        # Show configuration summary
+
         _print_header("🎯 [bold]Dataset Preparation Configuration[/bold]")
-        info_items = [
+        summary = [
+            ("🧪 Method:", method_l.upper()),
             ("🤖 Model:", model),
             ("📊 Dataset:", actual_dataset),
             ("📂 Split:", split),
@@ -371,39 +395,55 @@ def prepare_data(
             ("📏 Max Length:", f"{max_seq_length} tokens"),
             ("⚡ Workers:", str(workers)),
             ("📁 Output:", output),
-            ("🎯 Target Only:", "✅" if target_only else "❌"),
+            ("🎯 Target Only:", "✅" if config.get("train_on_target_only") else "❌"),
         ]
-        
-        if config.get("chat_template"):
-            info_items.append(("💬 Chat Template:", config["chat_template"]))
-        
-        _print_kv(info_items)
-        
-        # Handle dry run
+        if method_l == "sft" and config.get("chat_template"):
+            summary.append(("💬 Chat Template:", config["chat_template"]))
+        _print_kv(summary)
+
         if dry_run:
             console.print("\n👀 [bold yellow]Dry run - configuration shown above[/bold yellow]")
             console.print("\n📋 Full configuration:")
             console.print(json.dumps(config, indent=2))
             return
-        
-        # Confirm before processing
-        if not yes:
-            if not typer.confirm(f"\n🚀 Start processing dataset?"):
-                console.print("❌ Cancelled")
-                raise typer.Exit(0)
-        
-        # Execute preparation
-        _execute_dataset_preparation(config)
-        
+
+        if not yes and not typer.confirm("\n🚀 Start processing dataset?"):
+            console.print("❌ Cancelled")
+            raise typer.Exit(0)
+
+        if method_l == "dpo":
+            try:
+                from prepare_dataset.prepare_dpo_dataset import (
+                    convert_existing_dataset_to_dpo,
+                    prepare_dpo_dataset_for_opensloth,
+                )  # type: ignore
+            except ImportError:
+                import importlib.util, pathlib
+                prep_path = pathlib.Path(__file__).resolve().parent.parent.parent.parent / "prepare_dataset" / "prepare_dpo_dataset.py"
+                spec = importlib.util.spec_from_file_location("_dpo_prep", prep_path)
+                if spec is None or spec.loader is None:
+                    _fail("Could not import DPO dataset preparer")
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)  # type: ignore
+                convert_existing_dataset_to_dpo = getattr(module, "convert_existing_dataset_to_dpo")
+                prepare_dpo_dataset_for_opensloth = getattr(module, "prepare_dpo_dataset_for_opensloth")
+            if input_file:
+                convert_existing_dataset_to_dpo(input_file, output)
+            else:
+                if dataset:
+                    _fail("Direct HF -> DPO conversion not supported yet; supply JSON preference file")
+                prepare_dpo_dataset_for_opensloth(output)
+            console.print(f"\n🚀 Next: os train {output} --method dpo --model {model}")
+        else:
+            _execute_dataset_preparation(config)
     except typer.Exit:
         raise
     except KeyboardInterrupt:
-        console.print(f"\n⏹️  Interrupted by user")
+        console.print("\n⏹️  Interrupted by user")
         raise typer.Exit(130)
     except Exception as e:
         console.print(f"\n❌ [bold red]Error: {e}[/bold red]")
         raise typer.Exit(1)
-
 @app.command("list-templates")
 def list_templates():
     """📋 List available chat templates"""
@@ -686,6 +726,7 @@ def _print_training_config_summary(config: dict, dataset_path: str):
 def train_model(
     # Required
     dataset: Annotated[str, typer.Argument(help="📊 Path to processed dataset directory")],
+    method: Annotated[str, typer.Option("--method", "-M", help="🎯 Training method: sft or dpo")] = "sft",
     
     # Model (auto-detect from dataset if not specified)
     model: Annotated[Optional[str], typer.Option("--model", "-m", help="🤖 Model (auto-detect from dataset if not specified)")] = None,
@@ -740,132 +781,115 @@ def train_model(
     """
     
     try:
-        # Interactive dataset selection if not provided or doesn't exist
+        method_l = method.lower()
+        if method_l not in {"sft", "dpo"}:
+            _fail("--method must be one of: sft, dpo")
+
+        # Dataset path resolution / interactive select
         if not os.path.exists(dataset):
             console.print(f"❌ Dataset not found: {dataset}")
-            
-            datasets = _list_cached_datasets()
-            if not datasets:
-                console.print("💡 No datasets found. Use [bold]os prepare-data[/bold] first")
+            ds_list = _list_cached_datasets()
+            if not ds_list:
+                console.print("💡 No datasets found. Use 'os prepare-data' first")
                 raise typer.Exit(1)
-            
             console.print("\n📂 Available datasets:")
-            for i, ds in enumerate(datasets, 1):
-                console.print(f"  {i}. {ds}")
-            
+            for idx, ds in enumerate(ds_list, 1):
+                console.print(f"  {idx}. {ds}")
             choice = typer.prompt("\n🔢 Select dataset number", type=int)
-            if choice < 1 or choice > len(datasets):
+            if not (1 <= choice <= len(ds_list)):
                 _fail("Invalid selection")
-            dataset = datasets[choice-1]
+            dataset = ds_list[choice - 1]
             console.print(f"✅ Selected: [bold]{dataset}[/bold]")
-        
-        # Start with empty config
-        config = {"opensloth_config": {}, "training_args": {}}
-        
-        # Apply preset if specified
+
+        # Base config
+        config: dict = {"opensloth_config": {"training_type": method_l}, "training_args": {}}
+
+        # Preset merge
         if preset:
             if preset not in TRAINING_PRESETS:
-                available = ', '.join(TRAINING_PRESETS.keys())
-                _fail(f"Unknown preset: {preset}\nAvailable: {available}")
-            
+                _fail(f"Unknown preset: {preset}. Available: {', '.join(TRAINING_PRESETS)}")
             console.print(f"📋 Applying preset: [bold]{preset}[/bold]")
-            preset_config = TRAINING_PRESETS[preset]["config"]
-            config = _merge_configs(config, preset_config)
-        
-        # Build CLI configuration
-        cli_config = {"opensloth_config": {}, "training_args": {}}
-        
-        # Parse GPUs
+            config = _merge_configs(config, TRAINING_PRESETS[preset]["config"])
+
+        # CLI overrides
+        cli_cfg = {"opensloth_config": {}, "training_args": {}}
+        # GPUs
         try:
-            devices = [int(d.strip()) for d in gpus.split(",")]
-            cli_config["opensloth_config"]["devices"] = devices
+            cli_cfg["opensloth_config"]["devices"] = [int(d.strip()) for d in gpus.split(',')]
         except ValueError:
-            _fail(f"Invalid GPU specification: {gpus}")
-        
-        # Model settings
-        fast_model_args = {}
+            _fail(f"Invalid GPU list: {gpus}")
+        # Model args
+        fm_args = {}
         if model:
-            fast_model_args["model_name"] = model
+            fm_args["model_name"] = model
         if max_seq_length:
-            fast_model_args["max_seq_length"] = max_seq_length
-        fast_model_args["load_in_4bit"] = load_4bit
-        fast_model_args["full_finetuning"] = full_finetune
-        cli_config["opensloth_config"]["fast_model_args"] = fast_model_args
-        
-        # LoRA settings
+            fm_args["max_seq_length"] = max_seq_length
+        fm_args["load_in_4bit"] = load_4bit
+        fm_args["full_finetuning"] = full_finetune
+        cli_cfg["opensloth_config"]["fast_model_args"] = fm_args
+        # LoRA
         if not full_finetune and (lora_r or lora_alpha):
-            lora_args = {}
+            lora_cfg = {}
             if lora_r:
-                lora_args["r"] = lora_r
+                lora_cfg["r"] = lora_r
             if lora_alpha:
-                lora_args["lora_alpha"] = lora_alpha
-            cli_config["opensloth_config"]["lora_args"] = lora_args
-        
-        # Training arguments
-        training_args = {}
+                lora_cfg["lora_alpha"] = lora_alpha
+            cli_cfg["opensloth_config"]["lora_args"] = lora_cfg
+        # Training args
+        tr_args = {}
         if epochs:
-            training_args["num_train_epochs"] = epochs
+            tr_args["num_train_epochs"] = epochs
         if max_steps:
-            training_args["max_steps"] = max_steps
+            tr_args["max_steps"] = max_steps
         if batch_size:
-            training_args["per_device_train_batch_size"] = batch_size
+            tr_args["per_device_train_batch_size"] = batch_size
         if learning_rate:
-            training_args["learning_rate"] = learning_rate
-        cli_config["training_args"] = training_args
-        
-        # Merge configurations
-        config = _merge_configs(config, cli_config)
-        
-        # Apply defaults with dataset inheritance
+            tr_args["learning_rate"] = learning_rate
+        cli_cfg["training_args"] = tr_args
+
+        config = _merge_configs(config, cli_cfg)
         config = _apply_training_defaults(config, dataset)
         config["opensloth_config"]["data_cache_path"] = dataset
-        
-        # Auto-generate output directory
+
+        # Method specific tweaks
+        if method_l == "dpo":
+            config["opensloth_config"]["sequence_packing"] = False
+            if learning_rate is None and "learning_rate" not in config["training_args"]:
+                config["training_args"]["learning_rate"] = 5e-6
+            config["opensloth_config"]["dpo_args"] = {"beta": 0.1, "max_length": 1024, "max_prompt_length": 512}
+
         final_model = config["opensloth_config"]["fast_model_args"]["model_name"]
         if not output:
             output = _generate_output_dir(final_model, dataset)
         config["training_args"]["output_dir"] = output
-        
-        # Validate configuration
+
         _validate_training_config(config, dataset)
-        
-        # Print configuration summary
         _print_training_config_summary(config, dataset)
-        
+        console.print(f"🧪 Method: [bold]{method_l.upper()}[/bold]")
+
         if dry_run:
             console.print("\n👀 [bold yellow]Dry run - configuration shown above[/bold yellow]")
             console.print("\n📋 Full configuration:")
             console.print(json.dumps(config, indent=2))
             return
-        
-        # Final confirmation
-        if not yes:
-            if not typer.confirm(f"\n🚀 Start training?"):
-                console.print("❌ Cancelled")
-                raise typer.Exit(0)
-        
-        # Run training
-        console.print(f"\n🔄 Starting training...")
-        
-        # Import training functions
+
+        if not yes and not typer.confirm("\n🚀 Start training?"):
+            console.print("❌ Cancelled")
+            raise typer.Exit(0)
+
+        console.print("\n🔄 Starting training...")
         from opensloth.scripts.opensloth_sft_trainer import run_mp_training, setup_envs
         from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
-        
-        # Create Pydantic config objects
         opensloth_config = OpenSlothConfig(**config["opensloth_config"])
         training_args = TrainingArguments(**config["training_args"])
-        
-        # Setup environment and run training
         setup_envs(opensloth_config, training_args)
         run_mp_training(opensloth_config.devices, opensloth_config, training_args)
-        
         console.print(f"\n🎉 [bold green]Training completed![/bold green]")
         console.print(f"📁 Model saved to: [bold]{output}[/bold]")
-        
     except typer.Exit:
         raise
     except KeyboardInterrupt:
-        console.print(f"\n⏹️  Interrupted by user")
+        console.print("\n⏹️  Interrupted by user")
         raise typer.Exit(1)
     except Exception as e:
         console.print(f"\n❌ [bold red]Error: {e}[/bold red]")

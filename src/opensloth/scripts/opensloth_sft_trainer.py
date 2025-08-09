@@ -1,3 +1,9 @@
+"""
+Multi-GPU training script for OpenSloth.
+Supports various training types: SFT, DPO, KTO, ORPO, GRPO.
+Handles weight synchronization, model setup, and distributed training coordination.
+"""
+
 import importlib.util
 import os
 import sys

@@ -1,9 +1,7 @@
-"""
-Utility functions for multi-GPU training with Unsloth models.
-Handles weight synchronization, model setup, and distributed training coordination.
-"""
+"""Module for initializing model/tokenizer and creating trainers (SFT, DPO, etc.)."""
 
 import os
+from typing import Tuple
 
 from opensloth.patching.gemma import patch_gemma3_unsloth_for_sequence_packing
 
@@ -53,18 +51,13 @@ def _validate_dataset_compatibility(dataset_path: str, model_max_seq_length: int
             )
 
 
-def init_model_and_tokenizer(opensloth_config: OpenSlothConfig):
-    """Initialize and optionally set up LoRA for the model."""
-
-    cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
-    assert len(cuda_devices) == 1
+def init_model_and_tokenizer(opensloth_config: OpenSlothConfig) -> Tuple[object, object]:
+    """Initialize base/LoRA model and tokenizer; set up NCCL if multi-GPU."""
+    logger = get_opensloth_logger()
 
     from unsloth import FastLanguageModel
 
-    logger = get_opensloth_logger()
-
     logger.start_timing("model_loading")
-
     if opensloth_config.pretrained_lora:
         logger.info(
             f"Loading model from {opensloth_config.pretrained_lora} with LoRA weights"
@@ -75,36 +68,38 @@ def init_model_and_tokenizer(opensloth_config: OpenSlothConfig):
         **opensloth_config.fast_model_args.model_dump()
     )
     _maybe_hot_fix_gemma(opensloth_config, logger, tokenizer)
-
     logger.finish_timing("model_loading")
 
-    logger.start_timing("nccl_setup")
-    from opensloth.nccl_grad_sync import get_callback_and_setup_method
+    # NCCL setup only if >1 GPU
+    if len(opensloth_config.devices) > 1:
+        logger.start_timing("nccl_setup")
+        from opensloth.nccl_grad_sync import get_callback_and_setup_method
 
-    setup_nccl_for_opensloth = get_callback_and_setup_method()[1]
-    setup_nccl_for_opensloth(
-        rank=int(os.environ["OPENSLOTH_LOCAL_RANK"]),
-        gpus=opensloth_config.devices,
-    )
-    logger.finish_timing("nccl_setup")
+        setup_nccl_for_opensloth = get_callback_and_setup_method()[1]
+        setup_nccl_for_opensloth(
+            rank=int(os.environ["OPENSLOTH_LOCAL_RANK"]),
+            gpus=opensloth_config.devices,
+        )
+        logger.finish_timing("nccl_setup")
+    else:
+        logger.info("Single GPU detected; skipping NCCL setup")
 
-    model_device = model.device
     logger.info(
-        f"Model loaded on device {model_device}, tokenizer: {tokenizer.__class__.__name__}"
+        f"Model device: {model.device} | Tokenizer: {tokenizer.__class__.__name__}"
     )
 
     if (
         not opensloth_config.fast_model_args.full_finetuning
         and not opensloth_config.pretrained_lora
+        and opensloth_config.lora_args is not None
     ):
         logger.start_timing("lora_setup")
         from unsloth import FastModel
+
         model = FastModel.get_peft_model(
-            model,
-            **opensloth_config.lora_args.model_dump(),  # type: ignore
+            model, **opensloth_config.lora_args.model_dump()  # type: ignore
         )
         logger.finish_timing("lora_setup")
-
     return model, tokenizer
 
 def _maybe_hot_fix_gemma(opensloth_config, logger, tokenizer):
@@ -137,89 +132,50 @@ def create_trainer(
     opensloth_config: OpenSlothConfig,
     hf_train_args: TrainingArguments,
 ):
-    """Load or prepare the dataset and create the SFTTrainer."""
-
-    # Get enhanced logger for timing
-
+    """Create trainer (SFT/DPO/etc.) and apply SFT-only performance patches."""
     logger = get_opensloth_logger()
-
     logger.start_timing("trainer_setup")
-
-    trainer = _get_trainer(
-        model,
-        tokenizer,
-        opensloth_config,
-        hf_train_args,
-    )
-
+    trainer = _get_trainer(model, tokenizer, opensloth_config, hf_train_args)
     logger.finish_timing("trainer_setup")
 
-    logger.start_timing("training_loop_patch")
-    from opensloth.patching.inner_training_loop import patch_inner_training_loop
-    from opensloth.patching.patch_log import patch_log
-    from opensloth.patching.patch_sampler import patch_sampler
-    # from trl import SFTConfig, SFTTrainer
+    # Apply SFT-specific patches (inner loop, sampler, packing optimizations)
+    if opensloth_config.training_type == "sft":
+        logger.start_timing("training_loop_patch")
+        from opensloth.patching.inner_training_loop import patch_inner_training_loop
+        from opensloth.patching.patch_log import patch_log
+        from opensloth.patching.patch_sampler import patch_sampler
+        from .patching.get_batch_samples import patch_get_batch_samples
 
-    patch_log(trainer)
-    patch_inner_training_loop(trainer, opensloth_config.sequence_packing)
-
-    from .patching.get_batch_samples import patch_get_batch_samples
-
-    patch_get_batch_samples(opensloth_config)
-
-    # ====
-    trainer = patch_sampler(trainer)  # type: ignore
-    logger.finish_timing("training_loop_patch")
-
-    # Patch save_model, _save, and _maybe_log_save_evaluate to no-op on non-master ranks
-
-    if os.getenv("OPENSLOTH_LOCAL_RANK") != "0":
-        print(
-            f"[RANK={os.getenv('OPENSLOTH_LOCAL_RANK')}] Patching trainer.save_model, trainer._save, and trainer._maybe_log_save_evaluate to no-op on non-master rank."
+        patch_log(trainer)
+        patch_inner_training_loop(trainer, opensloth_config.sequence_packing)
+        patch_get_batch_samples(opensloth_config)
+        trainer = patch_sampler(trainer)  # type: ignore
+        logger.finish_timing("training_loop_patch")
+    else:
+        logger.info(
+            f"Skipping SFT-specific patches for training_type='{opensloth_config.training_type}'."
         )
 
-        def no_op(*args, **kwargs):
+    # Disable save operations on non-master ranks (multi-GPU only)
+    if len(opensloth_config.devices) > 1 and os.getenv("OPENSLOTH_LOCAL_RANK") != "0":
+        def _no_op(*args, **kwargs):
             pass
+        trainer._save = _no_op  # type: ignore
+        logger.info("Patched _save to no-op on non-master rank")
 
-        # trainer.save_model = no_op
-        trainer._save = no_op
-
-        # @patch
-        # def _maybe_log_save_evaluate(self: type(trainer), *args, **kwargs):
-        #     logger.info(
-        #         "Skipping _maybe_log_save_evaluate on non-master rank to avoid unnecessary operations."
-        #     )
-
-        # trainer._maybe_log_save_evaluate = no_op
-
-    # ===
+    # Always add epoch shuffle callback for visibility (safe for all trainers)
     from .patching.patch_sampler import ShuffleData
-
-    logger.info(f"Add callback ShuffleData to Trainer {trainer.__class__.__name__}")
     trainer.add_callback(ShuffleData())
-
     return trainer
 
 
-def _ensure_data_correct(train_dataset):
-    """
-    Ensure the dataset is correctly formatted for training.
-    Raises an error if the dataset is not in the expected format.
-    """
-    if (
-        not hasattr(train_dataset, "features")
-        or "input_ids" not in train_dataset.features
-    ):
-        raise ValueError(
-            "Dataset must have 'input_ids' feature for training. "
-            "Please check your dataset preparation."
-        )
-    if not hasattr(train_dataset, "features") or "labels" not in train_dataset.features:
-        logger = get_opensloth_logger()
-        logger.warning(
-            "Dataset does not have 'labels' feature. "
-            "This may affect training. Please check your dataset preparation."
-        )
+def configure_batch_size(hf_train_args, gpu_ith, num_gpus):
+    """Adjust per-device batch size for multi-GPU and silence logging on non-zero ranks."""
+    if num_gpus != 1:
+        # Trainer will internally shard per device; here we keep user semantics consistent.
+        hf_train_args.per_device_train_batch_size *= 1  # no-op placeholder for future logic
+    if gpu_ith != 0:
+        hf_train_args.report_to = "none"
 
 
 def _get_trainer(
@@ -229,71 +185,69 @@ def _get_trainer(
     hf_train_args: TrainingArguments,
 ):
     """
-    Returns an SFTTrainer instance with a dataset loaded from disk.
+    Returns an appropriate trainer instance (SFT, DPO, etc.) with a dataset loaded from disk.
     """
     from datasets import load_from_disk
-    from transformers import DataCollatorForSeq2Seq
-    from trl import SFTTrainer
-
-    from .logging_config import get_opensloth_logger
+    from .trainer_factory import create_trainer_by_type
 
     logger = get_opensloth_logger()
-
     logger.info(f"Loading dataset from {opensloth_config.data_cache_path}")
     try:
         train_dataset = load_from_disk(opensloth_config.data_cache_path)
-        _ensure_data_correct(train_dataset)
-        
-        # Validate dataset configuration compatibility
-        _validate_dataset_compatibility(opensloth_config.data_cache_path, opensloth_config.fast_model_args.max_seq_length)
-        
-        # Proactive filtering: drop samples longer than model max length if enabled
-        max_len = int(opensloth_config.fast_model_args.max_seq_length)
-        if opensloth_config.filter_overlength_samples:
+
+        # Dataset compatibility warning/validation (best-effort)
+        _validate_dataset_compatibility(
+            opensloth_config.data_cache_path,
+            opensloth_config.fast_model_args.max_seq_length,
+        )
+
+        # Optional filtering for SFT only (DPO datasets lack input_ids)
+        if (
+            opensloth_config.training_type == "sft"
+            and opensloth_config.filter_overlength_samples
+        ):
+            max_len = int(opensloth_config.fast_model_args.max_seq_length)
             before_n = len(train_dataset)
+
             def _len_ok(ex):
                 ids = ex.get("input_ids")
-                # Accept None (let collator handle) but prefer to keep simple robust check
                 if ids is None:
                     return True
-                # Some datasets store arrays; use generic len when possible
                 try:
                     return len(ids) <= max_len
                 except Exception:
                     return True
+
             train_dataset = train_dataset.filter(
-                _len_ok,
-                num_proc=getattr(hf_train_args, "dataset_num_proc", 1),
+                _len_ok, num_proc=getattr(hf_train_args, "dataset_num_proc", 1)
             )
-            after_n = len(train_dataset)
-            dropped = before_n - after_n
+            dropped = before_n - len(train_dataset)
             if dropped > 0:
                 logger.warning(
-                    f"Filtered {dropped}/{before_n} samples ({dropped/max(1,before_n):.2%}) exceeding max_len={max_len}."
+                    f"Filtered {dropped}/{before_n} samples ({dropped/max(1,before_n):.2%}) > max_len={max_len}."
                 )
-            else:
-                logger.info("No over-length samples found during dataset validation.")
-    except Exception:
+        else:
+            if opensloth_config.training_type != "sft":
+                logger.info(
+                    "Skipping over-length filtering (not applicable to non-SFT datasets)."
+                )
+    except Exception as e:
         logger.error(
-            f"Failed to load dataset from {opensloth_config.data_cache_path}. "
-            "Please verify that the path exists and the dataset is correctly prepared. "
-            "Refer to the documentation at "
-            "https://github.com/anhvth/opensloth/blob/main/cache_unsloth_dataset/README.md for guidance."
+            "Failed to load dataset. Ensure it was prepared correctly. Error: %s",
+            e,
         )
         raise
 
-    data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer)
-    hf_train_args.skip_prepare_dataset = True
-
-    trainer = SFTTrainer(
+    trainer = create_trainer_by_type(
         model=model,
+        tokenizer=tokenizer,
         train_dataset=train_dataset,
-        args=hf_train_args,  # type: ignore
-        tokenizer=tokenizer,  # type: ignore
-        data_collator=data_collator,
+        opensloth_config=opensloth_config,
+        hf_train_args=hf_train_args,
     )
-
-    logger.info("Trainer setup completed successfully")
+    logger.info(
+        f"Trainer created for training_type='{opensloth_config.training_type.upper()}'"
+    )
     return trainer
 
 
@@ -305,8 +259,4 @@ def configure_batch_size(hf_train_args, gpu_ith, num_gpus):
         hf_train_args.report_to = "none"
 
 
-__all__ = [
-    "configure_batch_size",
-    "create_trainer",
-    "init_model_and_tokenizer",
-]
+__all__ = ["configure_batch_size", "create_trainer", "init_model_and_tokenizer"]
