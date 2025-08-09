@@ -442,11 +442,35 @@ class BaseDatasetPreparer(ABC):
         dataset = self.format_conversations(dataset)
         data = self.tokenize_and_prepare_labels(dataset)
         
+        # Check if dataset is empty and provide helpful error
+        if len(data) == 0:
+            print(f"\n❌ [ERROR] No samples remain after processing!")
+            print(f"📊 Original samples: {len(dataset) if 'dataset' in locals() else 'Unknown'}")
+            print(f"🔍 After filtering: {len(data)}")
+            print(f"\n💡 This usually happens because:")
+            print(f"   • All samples were longer than max_seq_length ({self.args.max_seq_length})")
+            print(f"   • All samples had no training labels (when using --train-on-target-only)")
+            print(f"   • Chat template or response patterns don't match the data")
+            print(f"\n🛠️  Try these solutions:")
+            print(f"   • Increase --max-seq-length (currently {self.args.max_seq_length})")
+            print(f"   • Use a different --chat-template")
+            print(f"   • Check --instruction-part and --response-part patterns")
+            print(f"   • Use opensloth-dataset debug to analyze your data")
+            print(f"   • Try more samples with --samples")
+            raise RuntimeError("Dataset preparation failed: No samples remaining after processing")
+        
         # Debug visualization or save
         if self.args.debug > 0:
             self.debug_visualization(data)
+            print(f"\n🔍 [DEBUG] Debug mode completed with {len(data)} samples")
         else:
             self.save_dataset(data)
+            # Show final statistics
+            print(f"\n🎉 [SUCCESS] Dataset preparation completed!")
+            print(f"📁 Output: {self.args.output_dir}")
+            print(f"📊 Final dataset contains: {len(data)} samples")
+            if hasattr(self, '_last_size'):
+                print(f"💾 Ready for training with {len(data)} high-quality samples")
 
     # ------------------------------
     # Programmatic API for GUIs/SDKs
@@ -488,11 +512,35 @@ class BaseDatasetPreparer(ABC):
         dataset = self.format_conversations(dataset)
         data = self.tokenize_and_prepare_labels(dataset)
 
+        # Check if dataset is empty and provide helpful error
+        if len(data) == 0:
+            print(f"\n❌ [ERROR] No samples remain after processing!")
+            print(f"📊 Original samples: {len(dataset) if 'dataset' in locals() else 'Unknown'}")
+            print(f"🔍 After filtering: {len(data)}")
+            print(f"\n💡 This usually happens because:")
+            print(f"   • All samples were longer than max_seq_length ({self.args.max_seq_length})")
+            print(f"   • All samples had no training labels (when using --train-on-target-only)")
+            print(f"   • Chat template or response patterns don't match the data")
+            print(f"\n🛠️  Try these solutions:")
+            print(f"   • Increase --max-seq-length (currently {self.args.max_seq_length})")
+            print(f"   • Use a different --chat-template")
+            print(f"   • Check --instruction-part and --response-part patterns")
+            print(f"   • Use opensloth-dataset debug to analyze your data")
+            print(f"   • Try more samples with --samples")
+            raise RuntimeError("Dataset preparation failed: No samples remaining after processing")
+
         # Debug visualization or save
         if self.args.debug > 0:
             self.debug_visualization(data)
+            print(f"\n🔍 [DEBUG] Debug mode completed with {len(data)} samples")
         else:
             self.save_dataset(data)
+            # Show final statistics
+            print(f"\n🎉 [SUCCESS] Dataset preparation completed!")
+            print(f"📁 Output: {self.args.output_dir}")
+            print(f"📊 Final dataset contains: {len(data)} samples")
+            if hasattr(self, '_last_size'):
+                print(f"💾 Ready for training with {len(data)} high-quality samples")
 
         return self.args.output_dir
 

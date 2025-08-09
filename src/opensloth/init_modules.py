@@ -11,6 +11,48 @@ from .logging_config import get_opensloth_logger
 from .opensloth_config import OpenSlothConfig, TrainingArguments
 
 
+def _validate_dataset_compatibility(dataset_path: str, model_max_seq_length: int):
+    """Validate that the dataset is compatible with the training configuration."""
+    import json
+    import os
+    from pathlib import Path
+    
+    dataset_config_path = Path(dataset_path) / "dataset_config.json"
+    
+    if dataset_config_path.exists():
+        with open(dataset_config_path) as f:
+            dataset_config = json.load(f)
+        
+        dataset_max_seq_length = dataset_config.get("max_seq_length")
+        
+        if dataset_max_seq_length is not None:
+            if model_max_seq_length < dataset_max_seq_length:
+                raise ValueError(
+                    f"Training configuration mismatch!\n"
+                    f"Dataset was prepared with max_seq_length={dataset_max_seq_length}, "
+                    f"but training config specifies max_seq_length={model_max_seq_length}.\n"
+                    f"The training max_seq_length must be >= dataset max_seq_length.\n"
+                    f"Either:\n"
+                    f"  1. Increase training max_seq_length to {dataset_max_seq_length} or higher\n"
+                    f"  2. Re-prepare the dataset with --max-seq-length {model_max_seq_length}"
+                )
+            elif model_max_seq_length > dataset_max_seq_length:
+                logger = get_opensloth_logger()
+                logger.warning(
+                    f"Training max_seq_length ({model_max_seq_length}) is larger than "
+                    f"dataset max_seq_length ({dataset_max_seq_length}). This is OK but may be inefficient. "
+                    f"Consider re-preparing the dataset with --max-seq-length {model_max_seq_length} for optimal performance."
+                )
+        else:
+            # Old dataset without max_seq_length - show warning
+            logger = get_opensloth_logger()
+            logger.warning(
+                f"Dataset at {dataset_path} was prepared without max_seq_length specification. "
+                f"This may cause issues if sequences exceed training max_seq_length ({model_max_seq_length}). "
+                f"Consider re-preparing the dataset with --max-seq-length {model_max_seq_length}."
+            )
+
+
 def init_model_and_tokenizer(opensloth_config: OpenSlothConfig):
     """Initialize and optionally set up LoRA for the model."""
 
