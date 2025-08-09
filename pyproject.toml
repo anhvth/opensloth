@@ -52,7 +52,7 @@ Documentation = "https://github.com/anhvth/opensloth"
 
 [project.scripts]
 
-os = "opensloth.scripts.unified_cli:main"
+os = "opensloth.cli.main:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
