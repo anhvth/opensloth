@@ -313,10 +313,10 @@ class DemoReward(RewardFunction):
         """Print sample outputs for demonstration."""
         if not prompts or not completions:
             return
-        
-        print("=" * 80)
-        print(f"🎲 GRPO Sample Output (Reward Call #{self.call_count})")
-        print("=" * 80)
+        from opensloth.logging_config import get_opensloth_logger
+        _logger = get_opensloth_logger()
+        header = f"🎲 GRPO Sample Output (Reward Call #{self.call_count})"
+        _logger.info("=" * 80 + "\n" + header + "\n" + "=" * 80)
         
         try:
             # Extract prompt content
@@ -335,20 +335,20 @@ class DemoReward(RewardFunction):
             # Get answer if available
             answer = kwargs.get("answer", ["N/A"])[0] if kwargs.get("answer") else "N/A"
             
-            print(f"📝 Question:")
-            print(f"{prompt_text[:300]}{'...' if len(prompt_text) > 300 else ''}")
-            print(f"\n💡 Expected Answer: {answer}")
-            print(f"\n🤖 Generated Response:")
-            print(f"{completion_text}")
-            print(f"\n📊 Stats:")
-            print(f"  • Response Length: {len(completion_text)} chars")
-            print(f"  • Question Length: {len(prompt_text)} chars")
-            print(f"  • Batch Size: {len(completions)} generations")
+            _logger.info(
+                "📝 Question:\n" +
+                f"{prompt_text[:300]}{'...' if len(prompt_text) > 300 else ''}" +
+                "\n\n💡 Expected Answer: " + str(answer) +
+                "\n\n🤖 Generated Response:\n" + completion_text +
+                "\n\n📊 Stats:\n" +
+                f"  • Response Length: {len(completion_text)} chars\n" +
+                f"  • Question Length: {len(prompt_text)} chars\n" +
+                f"  • Batch Size: {len(completions)} generations"
+            )
             
         except Exception as e:
-            print(f"❌ Error displaying sample: {e}")
-        
-        print("=" * 80)
+            _logger.warning(f"Error displaying sample for demo_reward: {e}")
+        _logger.info("=" * 80)
 
 
 # Registry for reward functions

@@ -11,8 +11,6 @@ import time
 from typing import Any, List, Dict
 import warnings
 
-import argparse
-
 from opensloth.logging_config import OpenslothLogger
 from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
 
@@ -466,56 +464,3 @@ def setup_envs(opensloth_config: OpenSlothConfig, training_config: TrainingArgum
     # output dir
     os.environ["OPENSLOTH_OUTPUT_DIR"] = training_config.output_dir
     os.environ["OPENSLOTH_LOG_LEVEL"] = opensloth_config.log_level
-
-
-
-def main():
-    parser = argparse.ArgumentParser(description="OpenSloth SFT Trainer")
-    parser.add_argument("config_file", type=str, help="Path to config file")
-    parser.add_argument("--rank", type=int, default=None, help="Local rank for distributed training")
-    parser.add_argument("--world_size", type=int, default=None, help="World size for distributed training")
-    parser.add_argument("--tmux", type=str, default=None, help="tmux session name")
-    parser.add_argument("-y", action="store_true", help="Auto-kill existing tmux session")
-    args = parser.parse_args()
-
-    opensloth_config, training_config = initialize_training_config(args.config_file)
-
-    # CASE 1: Child process => single GPU
-    if args.rank is not None and args.world_size is not None:
-        print(f"[CASE 1] Running on rank {args.rank} with world size {args.world_size}")
-        train_on_single_gpu(
-            gpu=opensloth_config.devices[args.rank],
-            opensloth_config=opensloth_config,
-            hf_train_args=training_config,
-        )
-        return
-
-    # CASE 2: Top-level process => spawn multi-GPU or single GPU
-    if len(opensloth_config.devices) > 1:
-        if os.environ.get("USE_TMUX", "0") == "1" or args.tmux is not None:
-            session_name = args.tmux if args.tmux is not None else "train_hp"
-            run_tmux_training(
-                session_name=session_name,
-                config_file=args.config_file,
-                training_config=training_config,
-                gpus=opensloth_config.devices,
-                auto_kill=args.y,
-            )
-        else:
-            run_mp_training(
-                gpus=opensloth_config.devices,
-                opensloth_config=opensloth_config,
-                training_config=training_config,
-            )
-    else:
-        # Single GPU
-        assert args.tmux is None, "Cannot use tmux with a single GPU"
-        train_on_single_gpu(
-            gpu=opensloth_config.devices[0],
-            opensloth_config=opensloth_config,
-            hf_train_args=training_config,
-        )
-
-
-if __name__ == "__main__":
-    main()

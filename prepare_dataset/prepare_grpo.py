@@ -78,21 +78,45 @@ class GRPODatasetPreparer(BaseDatasetPreparer):
             print(f"[INFO] Loading HuggingFace dataset {self.args.dataset_name}...")
             import datasets
             try:
-                # Try with split as config first (for datasets like open-r1/DAPO-Math-17k-Processed)
                 dataset = datasets.load_dataset(self.args.dataset_name, self.args.split, split="train")
                 print(f"[INFO] Loaded with config '{self.args.split}'")
             except Exception as e1:
-                try:
-                    # Fallback to split as actual split
-                    dataset = datasets.load_dataset(self.args.dataset_name, split=self.args.split)
-                    print(f"[INFO] Loaded with split '{self.args.split}'")
-                except Exception as e2:
-                    # Last fallback - try just the dataset name
+                # Additional smart fallbacks for multi-config datasets
+                fallback_errors = [e1]
+                # If user kept default 'train' but it's actually a config-driven dataset, try common configs
+                if self.args.split == 'train':
+                    for cfg in ("all", "en", "cn"):
+                        try:
+                            dataset = datasets.load_dataset(self.args.dataset_name, cfg, split="train")
+                            print(f"[INFO] Loaded with config '{cfg}' (fallback from 'train')")
+                            break
+                        except Exception as e_cfg:
+                            fallback_errors.append(e_cfg)
+                    else:
+                        # None worked; continue with original fallback chain
+                        try:
+                            dataset = datasets.load_dataset(self.args.dataset_name, split=self.args.split)
+                            print(f"[INFO] Loaded with split '{self.args.split}'")
+                        except Exception as e2:
+                            fallback_errors.append(e2)
+                            try:
+                                dataset = datasets.load_dataset(self.args.dataset_name)["train"]
+                                print(f"[INFO] Loaded default train split")
+                            except Exception as e3:
+                                fallback_errors.append(e3)
+                                raise ValueError("Failed to load dataset: " + ", ".join(str(err) for err in fallback_errors))
+                else:
                     try:
-                        dataset = datasets.load_dataset(self.args.dataset_name)["train"]
-                        print(f"[INFO] Loaded default train split")
-                    except Exception as e3:
-                        raise ValueError(f"Failed to load dataset: {e1}, {e2}, {e3}")
+                        dataset = datasets.load_dataset(self.args.dataset_name, split=self.args.split)
+                        print(f"[INFO] Loaded with split '{self.args.split}'")
+                    except Exception as e2:
+                        fallback_errors.append(e2)
+                        try:
+                            dataset = datasets.load_dataset(self.args.dataset_name)["train"]
+                            print(f"[INFO] Loaded default train split")
+                        except Exception as e3:
+                            fallback_errors.append(e3)
+                            raise ValueError("Failed to load dataset: " + ", ".join(str(err) for err in fallback_errors))
             
             print("[INFO] Standardizing dataset format...")
             from unsloth.chat_templates import standardize_data_formats

@@ -6,10 +6,13 @@ import numpy as np
 from fastcore.all import patch
 from filelock import BaseFileLock, FileLock
 from transformers.trainer_utils import speed_metrics
+from opensloth.logging_config import get_opensloth_logger
 
 TIME_OUT = 300
 SLEEP_TIME = 0.01
 WAIT_WARNING_THRESHOLD = 2
+
+logger = get_opensloth_logger()
 
 # =====================================================================================
 # SMART AGGREGATION STRATEGIES
@@ -133,7 +136,7 @@ class Flag:
 
             elapsed = time.time() - t0
             if elapsed > WAIT_WARNING_THRESHOLD and not has_logged:
-                print(f"[Flag] waiting {elapsed:.1f}s at step={step}")
+                logger.debug(f"[Flag] waiting {elapsed:.1f}s at step={step}")
                 has_logged = True
 
             if elapsed > timeout:
@@ -154,7 +157,7 @@ class Flag:
 
             elapsed = time.time() - t0
             if elapsed > WAIT_WARNING_THRESHOLD and not has_logged:
-                print(f"[Flag] rank={rank} waiting reset {elapsed:.1f}s at step={step}")
+                logger.debug(f"[Flag] rank={rank} waiting reset {elapsed:.1f}s at step={step}")
                 has_logged = True
 
             if elapsed > timeout:
@@ -175,6 +178,7 @@ def patch_log_for_multi_gpu(trainer):
     Universal multi-GPU log patch that works for any trainer type (SFT, DPO, GRPO, etc.).
     Dynamically detects numeric metrics and applies intelligent aggregation strategies.
     """
+    return trainer
     log_mmap: dict[str, np.memmap] = {}
     log_locks: dict[str, BaseFileLock] = {}
 
@@ -183,8 +187,7 @@ def patch_log_for_multi_gpu(trainer):
         world_size = int(os.environ["OPENSLOTH_WORLD_SIZE"])
         log_cache_dir = os.environ["OPENSLOTH_OUTPUT_DIR"]
         is_main = local_rank == 0
-
-        print(f"[{local_rank=}] Patching log with smart aggregation. Dir: {log_cache_dir}, GPUs: {world_size}")
+        logger.info(f"[{local_rank=}] Patching log with smart aggregation. Dir: {log_cache_dir}, GPUs: {world_size}")
 
         if is_main:
             os.makedirs(log_cache_dir, exist_ok=True)
@@ -196,16 +199,28 @@ def patch_log_for_multi_gpu(trainer):
             file_path=f"{log_cache_dir}/log_sync_flag.dat",
             is_master=is_main,
         )
-        print(f"[{local_rank=}] Smart log patch initialization complete.")
+        logger.info(f"[{local_rank=}] Smart log patch initialization complete.")
 
     except Exception as e:
-        print(f"[{local_rank=}] CRITICAL ERROR during initialization: {e}")
+        logger.error(f"[{local_rank=}] CRITICAL ERROR during initialization: {e}")
         raise e
 
     @patch
     def log(
         self:type(trainer), logs: dict[str, float], start_time: float | None = None # pyright: ignore[reportInvalidTypeForm]
     ) -> None:
+        # Normalize tensor scalars to floats so reward metrics aren't skipped
+        try:
+            import torch  # type: ignore
+            for k, v in list(logs.items()):
+                if isinstance(v, torch.Tensor):
+                    if v.numel() == 1:
+                        logs[k] = float(v.item())
+                    else:
+                        # Skip non-scalar tensors
+                        logs.pop(k)
+        except Exception:
+            pass
         if self.state.epoch is not None:
             logs["epoch"] = round(self.state.epoch, 2)
 
@@ -232,10 +247,11 @@ def patch_log_for_multi_gpu(trainer):
         # === OPENSLOTH DYNAMIC PATCH START ===
         # Dynamically determine which keys we need to sync for this step
         # Filter for numeric values that can be aggregated
-        numeric_keys_to_sync = [
-            k for k, v in logs.items() 
-            if isinstance(v, (int, float)) and not np.isnan(v) and not np.isinf(v)
-        ]
+        numeric_keys_to_sync: list[str] = []
+        for k, v in list(logs.items()):
+            if isinstance(v, (int, float)):
+                if not (isinstance(v, float) and (np.isnan(v) or np.isinf(v))):
+                    numeric_keys_to_sync.append(k)
 
         if numeric_keys_to_sync:
             try:
@@ -269,7 +285,7 @@ def patch_log_for_multi_gpu(trainer):
                     log_sync_flag.wait_for_reset(rank=local_rank, step=current_step)
 
             except Exception as e:
-                print(f"Rank {local_rank} smart logging error at step {current_step}: {e}")
+                logger.error(f"Rank {local_rank} smart logging error at step {current_step}: {e}")
                 # Fallback to single-GPU logging
                 self.control = self.callback_handler.on_log(
                     self.args, self.state, self.control, logs
@@ -450,7 +466,10 @@ def _handle_master_logging(
 ) -> None:
     flag.wait_for_all(step=step)
     aggregated_logs = _aggregate_logs(logs, support_keys, log_mmap, log_locks)
-
+    aggregated_logs["step"] = step
+    # Replace last history entry (created earlier) with aggregated metrics including step
+    if trainer.state.log_history:
+        trainer.state.log_history[-1] = aggregated_logs
     trainer.control = trainer.callback_handler.on_log(
         trainer.args, trainer.state, trainer.control, aggregated_logs
     )

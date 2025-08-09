@@ -306,6 +306,12 @@ def _create_grpo_trainer(
 
     # Setup reward functions
     reward_names = grpo_args.reward_functions or create_reward_preset(grpo_args.task_type)
+    # Persist resolved names for downstream serialization (e.g., auto-generated train.py)
+    if not grpo_args.reward_functions:
+        try:
+            grpo_args.reward_functions = list(reward_names)  # type: ignore
+        except Exception:
+            pass
     reward_functions = get_reward_functions(reward_names)
     logger.info(f"Using reward functions: {[getattr(rf, 'name', repr(rf)) for rf in reward_functions]}")
 

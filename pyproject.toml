@@ -51,8 +51,11 @@ Documentation = "https://github.com/anhvth/opensloth"
 "Bug Tracker" = "https://github.com/anhvth/opensloth/issues"
 
 [project.scripts]
-
-os = "opensloth.cli.main:main"
+# New focused CLI commands  
+os-data = "opensloth.cli.os_data:main"
+os-sft = "opensloth.cli.os_sft:main"
+os-dpo = "opensloth.cli.os_dpo:main"
+os-grpo = "opensloth.cli.os_grpo:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
