@@ -69,7 +69,8 @@ def get_callback_and_setup_method():
         os.environ["MASTER_ADDR"] = "127.0.0.1"  # Localhost for single machine
         if "MASTER_PORT" not in os.environ:
             os.environ["MASTER_PORT"] = "29501"  # Use fixed port
-        print(f"[RANK={rank}] {os.environ}")
+        
+        print(f"[RANK={rank}] Initializing NCCL with world_size={world_size}")
         dist.init_process_group(
             backend="nccl", init_method="env://", rank=rank, world_size=world_size
         )

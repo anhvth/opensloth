@@ -280,7 +280,11 @@ def train_on_single_gpu(
         logger.info("Single GPU training detected, skipping NCCL gradient sync")
 
     logger.start_timing("actual_training")
-    logger.debug(f"Environment: {os.environ}")
+    
+    # Skip debug env logging for cleaner GRPO output
+    if opensloth_config.training_type != "grpo":
+        logger.debug(f"Environment: {os.environ}")
+    
     # Patch: Only resume from checkpoint if a valid path is provided
     resume_from_checkpoint = getattr(hf_train_args, 'resume_from_checkpoint', None)
     if resume_from_checkpoint and hasattr(trainer, "train") and "resume_from_checkpoint" in trainer.train.__code__.co_varnames:  # type: ignore[attr-defined]

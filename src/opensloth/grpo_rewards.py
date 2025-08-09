@@ -15,14 +15,36 @@ class RewardFunction(ABC):
         self.name = name
         self.description = description
     
+    def _extract_completion_content(self, completion) -> str:
+        """
+        Extract content from completion in either format.
+        
+        Args:
+            completion: Either a string (standard format) or list of message dicts (conversational format)
+            
+        Returns:
+            Content string
+        """
+        if isinstance(completion, str):
+            # Standard format: completion is already a string
+            return completion
+        elif isinstance(completion, list) and len(completion) > 0:
+            # Conversational format: completion is a list of message dicts
+            if isinstance(completion[0], dict) and "content" in completion[0]:
+                return completion[0]["content"]
+            else:
+                return str(completion[0])  # Fallback to string conversion
+        else:
+            return ""
+    
     @abstractmethod
-    def __call__(self, prompts: List[List[Dict]], completions: List[List[Dict]], **kwargs) -> List[float]:
+    def __call__(self, prompts, completions, **kwargs) -> List[float]:
         """
         Calculate rewards for completions.
         
         Args:
-            prompts: List of prompt messages (each prompt is a list of chat messages)
-            completions: List of completion messages (each completion is a list of chat messages)
+            prompts: List of prompts (format depends on dataset type)
+            completions: List of completions (format depends on dataset type)
             **kwargs: Additional arguments (e.g., ground truth answers, metadata)
             
         Returns:
@@ -40,10 +62,10 @@ class LengthPenaltyReward(RewardFunction):
         self.max_length = max_length
         self.penalty = penalty
     
-    def __call__(self, prompts: List[List[Dict]], completions: List[List[Dict]], **kwargs) -> List[float]:
+    def __call__(self, prompts, completions, **kwargs) -> List[float]:
         scores = []
         for completion in completions:
-            content = completion[0]["content"] if completion else ""
+            content = self._extract_completion_content(completion)
             length = len(content)
             
             if length < self.min_length or length > self.max_length:
@@ -78,11 +100,11 @@ class MathFormatReward(RewardFunction):
             flags=re.MULTILINE|re.DOTALL
         )
     
-    def __call__(self, prompts: List[List[Dict]], completions: List[List[Dict]], **kwargs) -> List[float]:
+    def __call__(self, prompts, completions, **kwargs) -> List[float]:
         scores = []
         for completion in completions:
             s = 0.0
-            resp = completion[0]["content"] if completion else ""
+            resp = self._extract_completion_content(completion)
             
             # Exact format match gets highest reward
             if self.match_format.search(resp) is not None:
@@ -120,12 +142,12 @@ class MathAnswerReward(RewardFunction):
             flags=re.MULTILINE|re.DOTALL
         )
     
-    def __call__(self, prompts: List[List[Dict]], completions: List[List[Dict]], **kwargs) -> List[float]:
+    def __call__(self, prompts, completions, **kwargs) -> List[float]:
         answers = kwargs.get("answer", [])
         if not answers:
             return [0.0] * len(completions)
         
-        responses = [c[0]["content"] if c else "" for c in completions]
+        responses = [self._extract_completion_content(c) for c in completions]
         extracted = [m.group(1) if (m := self.match_format.search(r)) else None for r in responses]
         
         scores = []
@@ -170,12 +192,12 @@ class MathNumberReward(RewardFunction):
             flags=re.MULTILINE|re.DOTALL
         )
     
-    def __call__(self, prompts: List[List[Dict]], completions: List[List[Dict]], **kwargs) -> List[float]:
+    def __call__(self, prompts, completions, **kwargs) -> List[float]:
         answers = kwargs.get("answer", [])
         if not answers:
             return [0.0] * len(completions)
         
-        responses = [c[0]["content"] if c else "" for c in completions]
+        responses = [self._extract_completion_content(c) for c in completions]
         extracted = [m.group(1) if (m := self.match_numbers.search(r)) else None for r in responses]
         
         scores = []
@@ -199,10 +221,10 @@ class CodeCorrectnessReward(RewardFunction):
     def __init__(self):
         super().__init__("code_correctness", "Rewards syntactically correct code")
     
-    def __call__(self, prompts: List[List[Dict]], completions: List[List[Dict]], **kwargs) -> List[float]:
+    def __call__(self, prompts, completions, **kwargs) -> List[float]:
         scores = []
         for completion in completions:
-            content = completion[0]["content"] if completion else ""
+            content = self._extract_completion_content(completion)
             
             # Basic syntax checks
             score = 0.0
@@ -258,6 +280,72 @@ class CodeCorrectnessReward(RewardFunction):
         return True
 
 
+class DemoReward(RewardFunction):
+    """
+    Demo reward function that provides periodic sample output during training.
+    Similar to the demonstration function in the reference Unsloth GRPO tutorial.
+    """
+    
+    def __init__(self, print_every: int = 5):
+        super().__init__("demo_reward", "Provides demonstration output during training")
+        self.print_every = print_every
+        self.call_count = 0
+    
+    def __call__(self, prompts, completions, **kwargs) -> List[float]:
+        self.call_count += 1
+        
+        # Provide demonstration output every N calls
+        if self.call_count % self.print_every == 0:
+            self._print_sample_output(prompts, completions, **kwargs)
+        
+        # Return neutral scores (this is primarily for demonstration)
+        return [0.0] * len(completions)
+    
+    def _print_sample_output(self, prompts, completions, **kwargs):
+        """Print sample outputs for demonstration."""
+        if not prompts or not completions:
+            return
+        
+        print("=" * 80)
+        print(f"🎲 GRPO Sample Output (Reward Call #{self.call_count})")
+        print("=" * 80)
+        
+        # Show first prompt and completion
+        try:
+            # Extract prompt content
+            if isinstance(prompts[0], list) and len(prompts[0]) > 0:
+                # Conversational format
+                if isinstance(prompts[0][-1], dict) and "content" in prompts[0][-1]:
+                    prompt_text = prompts[0][-1]["content"]
+                else:
+                    prompt_text = str(prompts[0][-1])
+            else:
+                prompt_text = str(prompts[0])
+            
+            # Extract completion content
+            completion_text = self._extract_completion_content(completions[0])
+            
+            # Get answer if available
+            answer = kwargs.get("answer", ["N/A"])[0] if kwargs.get("answer") else "N/A"
+            
+            print(f"📝 Question:")
+            print(f"{prompt_text[:300]}{'...' if len(prompt_text) > 300 else ''}")
+            print(f"\n💡 Expected Answer: {answer}")
+            print(f"\n🤖 Generated Response:")
+            print(f"{completion_text}")
+            print(f"\n📊 Stats:")
+            print(f"  • Response Length: {len(completion_text)} chars")
+            print(f"  • Question Length: {len(prompt_text)} chars")
+            
+            # Count generations in this batch
+            print(f"  • Batch Size: {len(completions)} generations")
+            
+        except Exception as e:
+            print(f"❌ Error displaying sample: {e}")
+        
+        print("=" * 80)
+
+
 # Registry for reward functions
 _REWARD_REGISTRY: Dict[str, RewardFunction] = {}
 
@@ -290,15 +378,16 @@ register_reward_function(MathFormatReward())
 register_reward_function(MathAnswerReward())
 register_reward_function(MathNumberReward())
 register_reward_function(CodeCorrectnessReward())
+register_reward_function(DemoReward())
 
 
 def create_reward_preset(task_type: str) -> List[str]:
     """Create a preset list of reward functions for common task types."""
     presets = {
-        "math": ["math_format", "math_answer", "math_number"],
-        "code": ["code_correctness", "length_penalty"],
-        "general": ["length_penalty"],
-        "reasoning": ["math_format", "length_penalty"]
+        "math": ["math_format", "math_answer", "math_number", "demo_reward"],
+        "code": ["code_correctness", "length_penalty", "demo_reward"],
+        "general": ["length_penalty", "demo_reward"],
+        "reasoning": ["math_format", "length_penalty", "demo_reward"]
     }
     
     if task_type not in presets:
@@ -310,8 +399,8 @@ def create_reward_preset(task_type: str) -> List[str]:
 def get_chat_template_for_task(task_type: str, tokenizer_eos_token: str = "</s>") -> str:
     """Get appropriate chat template for different task types."""
     if task_type == "math":
-        reasoning_start = "<start_working_out>"
-        reasoning_end = "<end_working_out>"
+        reasoning_start = "<think>"
+        reasoning_end = "</think>"
         solution_start = "<SOLUTION>"
         solution_end = "</SOLUTION>"
         

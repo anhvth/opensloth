@@ -744,6 +744,21 @@ def _print_training_config_summary(config: dict, dataset_path: str):
         ("📊 Logging:", training_args['report_to']),
     ])
     
+    # GRPO-specific configuration
+    if opensloth_config.get("training_type") == "grpo" or opensloth_config.get("grpo_args"):
+        grpo_args = opensloth_config.get("grpo_args", {})
+        console.print()
+        console.print("🎲 [bold cyan]GRPO Configuration[/bold cyan]")
+        grpo_items = [
+            ("🎯 Task Type:", grpo_args.get("task_type", "general")),
+            ("👥 Group Size:", str(grpo_args.get("group_size", 4))),
+            ("📝 Max New Tokens:", str(grpo_args.get("max_new_tokens", 256))),
+            ("🌡️ Temperature:", str(grpo_args.get("temperature", 1.0))),
+            ("🏆 Reward Functions:", ", ".join(grpo_args.get("reward_functions", ["auto-selected"]))),
+            ("💬 Chat Template:", "Custom" if grpo_args.get("use_custom_chat_template") else "Default"),
+        ]
+        _print_kv(grpo_items)
+    
     _print_kv(items)
 
 @app.command("train")
