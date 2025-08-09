@@ -11,7 +11,7 @@ def calculate_token_metrics(input_ids, pad_token_id):
     return total_tokens, effective_tokens
 
 
-def patch_inner_training_loop(trainer, sequence_packing):
+def patch_inner_training_loop_for_sft(trainer, sequence_packing):
     """
     Ultra-minimal patch that only adds essential opensloth customizations.
     This approach patches specific methods instead of duplicating the entire training loop.
@@ -54,11 +54,6 @@ def patch_inner_training_loop(trainer, sequence_packing):
         train_dataloader = self.get_train_dataloader()
         if self.is_fsdp_xla_v2_enabled:
             train_dataloader = tpu_spmd_dataloader(train_dataloader)
-
-        # Setting up training control variables:
-        # number of training epochs: num_train_epochs
-        # number of training steps per epoch: num_update_steps_per_epoch
-        # total number of training steps to execute: max_steps
         total_train_batch_size = (
             self._train_batch_size * args.gradient_accumulation_steps * args.world_size
         )

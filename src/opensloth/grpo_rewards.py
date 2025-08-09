@@ -399,8 +399,8 @@ def create_reward_preset(task_type: str) -> List[str]:
 def get_chat_template_for_task(task_type: str, tokenizer_eos_token: str = "</s>") -> str:
     """Get appropriate chat template for different task types."""
     if task_type == "math":
-        reasoning_start = "<think>"
-        reasoning_end = "</think>"
+        reasoning_start = "<start_working_out>"
+        reasoning_end = "</end_working_out>"
         solution_start = "<SOLUTION>"
         solution_end = "</SOLUTION>"
         

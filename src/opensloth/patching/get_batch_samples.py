@@ -141,7 +141,7 @@ from opensloth.opensloth_config import OpenSlothConfig
 
 def patch_get_batch_samples(opensloth_config: OpenSlothConfig):
     """
-    Ultra-minimal patch that only adds essential opensloth customizations.
+    Universal patch that handles data distribution for all training types.
     This approach patches specific methods instead of duplicating the entire training loop.
     """
     # Get environment variables
@@ -155,118 +155,107 @@ def patch_get_batch_samples(opensloth_config: OpenSlothConfig):
 
     @patch
     def get_batch_samples(self: Trainer, epoch_iterator, num_batches, device=None):
-        """Enhanced batch sampling with GPU slicing and token tracking for opensloth."""
+        """Universal batch sampling with GPU slicing and type-aware processing for opensloth."""
         batch_samples, num_items_in_batch = original_get_batch_samples(
             self, epoch_iterator, num_batches, device
         )
-        if not opensloth_config.sequence_packing:
-            # all_items = {gpu: {} for gpu in range(hp_world_size)}
-            ga_batches = []
-            for accumulated_batch in batch_samples:
-                b = {}
-                b["input_ids"] = accumulated_batch["input_ids"][
-                    hp_local_rank::hp_world_size
-                ]
-                b["labels"] = accumulated_batch["labels"][hp_local_rank::hp_world_size]
-                b["attention_mask"] = accumulated_batch["attention_mask"][
-                    hp_local_rank::hp_world_size
-                ]
-                ga_batches.append(b)
+        
+        # --- UNIVERSAL STEP: Shard the global batch for this GPU ---
+        # This logic is applied to ALL training types for consistent multi-GPU data distribution
+        ga_batches = []
+        for accumulated_batch in batch_samples:
+            if 'sft' in type(self).__name__.lower():
+                local_batch = {}
+                for key, value in accumulated_batch.items():
+                    if hasattr(value, '__getitem__') and len(value) > 0:
+                        local_batch[key] = value[hp_local_rank::hp_world_size]
+                    else:
+                        local_batch[key] = value
+            elif 'grpo' in  type(self).__name__.lower():
+                local_batch = accumulated_batch[hp_local_rank::hp_world_size]
+            ga_batches.append(local_batch)
+        
+        # --- TYPE-SPECIFIC STEP: Process the local shard ---
+        if opensloth_config.sequence_packing and opensloth_config.training_type == "sft":
+            # Apply SFT's sequence packing to the sharded batches
+            return _apply_sft_packing(ga_batches, opensloth_config, logger), num_items_in_batch
+        else:
+            # For GRPO/DPO and non-packed SFT, the data is ready to use as-is
+
+            # Simply return the sharded batch without additional processing
+            logger.debug(f"Non-packed processing for {opensloth_config.training_type}: returning {len(ga_batches)} batches")
             return ga_batches, num_items_in_batch
 
-        # Apply GPU-specific optimizations if multi-GPU
-        # if hp_world_size > 1:
-        max_seq_len = opensloth_config.fast_model_args.max_seq_length
+def _apply_sft_packing(ga_batches, opensloth_config: OpenSlothConfig, logger):
+    """Apply SFT-specific sequence packing to the already-sharded batches."""
+    max_seq_len = opensloth_config.fast_model_args.max_seq_length
 
-        all_items = []
-        batch_samples[0]["input_ids"].shape[0]
-        for accumulated_batch in batch_samples:
-            input_ids, labels, attention_mask = (
-                accumulated_batch["input_ids"],
-                accumulated_batch["labels"],
-                accumulated_batch["attention_mask"],
+    all_items = []
+    for accumulated_batch in ga_batches:
+        input_ids, labels, attention_mask = (
+            accumulated_batch["input_ids"],
+            accumulated_batch["labels"],
+            accumulated_batch["attention_mask"],
+        )
+        for i in range(len(input_ids)):
+            single_input_ids = input_ids[i]
+            single_labels = labels[i]
+            single_attention_mask = attention_mask[i]
+            num_non_padding_tokens = single_attention_mask.sum().item()
+            single_input_ids = single_input_ids[:num_non_padding_tokens]
+            single_labels = single_labels[:num_non_padding_tokens]
+            single_attention_mask = single_attention_mask[:num_non_padding_tokens]
+            all_items.append(
+                {
+                    "input_ids": single_input_ids,
+                    "labels": single_labels,
+                    "attention_mask": single_attention_mask,
+                    "num_non_padding_tokens": num_non_padding_tokens,
+                }
             )
-            for i in range(len(input_ids)):
-                single_input_ids = input_ids[i]
-                single_labels = labels[i]
-                single_attention_mask = attention_mask[i]
-                num_non_padding_tokens = single_attention_mask.sum().item()
-                single_input_ids = single_input_ids[:num_non_padding_tokens]
-                single_labels = single_labels[:num_non_padding_tokens]
-                single_attention_mask = single_attention_mask[:num_non_padding_tokens]
-                all_items.append(
-                    {
-                        "input_ids": single_input_ids,
-                        "labels": single_labels,
-                        "attention_mask": single_attention_mask,
-                        "num_non_padding_tokens": num_non_padding_tokens,
-                    }
-                )
-        # Sort items by length
-        all_items.sort(key=lambda item: item["num_non_padding_tokens"])
-        items_this_device = all_items[hp_local_rank::hp_world_size]
-        cumulative_len = 0
-        packed_items = []
-        pack_items_pending = []
-        while items_this_device:
-            item = items_this_device.pop(0)
-            ft_len = cumulative_len + item["num_non_padding_tokens"]
-            if ft_len > max_seq_len:  # check if we can pack it
-                # Pack current batch
-                packed = pack(
-                    [item["input_ids"] for item in pack_items_pending],
-                    [item["labels"] for item in pack_items_pending],
-                    [item["attention_mask"] for item in pack_items_pending],
-                )
-                # Add packed batch to the list
-                logger.debug(
-                    f"Packed {len(pack_items_pending)} items into batch of length {packed['input_ids'].shape[1]}"
-                )
-                packed_items.append(packed)
-
-                # Reset for next batch
-                pack_items_pending = []
-                cumulative_len = 0
-
-            # Add item to current batch
-            pack_items_pending.append(item)
-            cumulative_len += item["num_non_padding_tokens"]
-
-        # Pack any remaining items
-        if pack_items_pending:
+    
+    # Sort items by length for optimal packing
+    all_items.sort(key=lambda item: item["num_non_padding_tokens"])
+    
+    # Pack sequences into batches
+    cumulative_len = 0
+    packed_items = []
+    pack_items_pending = []
+    
+    while all_items:
+        item = all_items.pop(0)
+        ft_len = cumulative_len + item["num_non_padding_tokens"]
+        if ft_len > max_seq_len:  # check if we can pack it
+            # Pack current batch
             packed = pack(
                 [item["input_ids"] for item in pack_items_pending],
                 [item["labels"] for item in pack_items_pending],
                 [item["attention_mask"] for item in pack_items_pending],
             )
+            # Add packed batch to the list
             logger.debug(
                 f"Packed {len(pack_items_pending)} items into batch of length {packed['input_ids'].shape[1]}"
             )
             packed_items.append(packed)
 
-        # Use packed items as batch_samples
-        batch_samples = packed_items
+            # Reset for next batch
+            pack_items_pending = []
+            cumulative_len = 0
 
-        # if len(batch_samples) > origin_batch_size:
-        #     # we can batch them currently is just a list of single items
+        # Add item to current batch
+        pack_items_pending.append(item)
+        cumulative_len += item["num_non_padding_tokens"]
 
-        #     # sort by length again to ensure proper packing
-        #     batch_samples = sorted(batch_samples, key=lambda x: x["input_ids"].shape[1])
-        #     final_batches = []
-        #     pending_batch = []
-        #     pad_tokens = {
-        #         "input_ids": self.processing_class.pad_token_type_id,
-        #         "labels": -100,  # -100 is the default ignore index for labels
-        #         "attention_mask": 0,
-        #     }
-        #     while batch_samples:
-        #         item = batch_samples.pop(0)
-        #         pending_batch.append(item)
-        #         if len(pending_batch) >= origin_batch_size:
-        #             final_batches.append(_to_batch(pending_batch, pad_tokens))
-        #             pending_batch = []
-        #     if pending_batch:
-        #         final_batches.append(_to_batch(pending_batch, pad_tokens))
-        #     # Return final batches
-        #     batch_samples = final_batches
-        return batch_samples, num_items_in_batch
+    # Pack any remaining items
+    if pack_items_pending:
+        packed = pack(
+            [item["input_ids"] for item in pack_items_pending],
+            [item["labels"] for item in pack_items_pending],
+            [item["attention_mask"] for item in pack_items_pending],
+        )
+        logger.debug(
+            f"Packed {len(pack_items_pending)} items into batch of length {packed['input_ids'].shape[1]}"
+        )
+        packed_items.append(packed)
+
+    return packed_items
