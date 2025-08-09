@@ -1,0 +1,996 @@
+#!/usr/bin/env python3
+"""
+OpenSloth Unified CLI
+
+A clean, unified command-line interface for OpenSloth.
+- `os prepare-data` - Prepare datasets for fine-tuning
+- `os train` - Train models with pre-processed datasets
+
+No redundancy, no confusion, just clean workflows.
+"""
+
+import os
+import sys
+import json
+import statistics
+import subprocess
+import re
+from pathlib import Path
+from typing import Optional, List, Annotated, Dict, Tuple
+from datetime import datetime
+
+import typer
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.progress import track
+
+# Main app
+app = typer.Typer(
+    name="os",
+    help="🦥 OpenSloth - Unified CLI for dataset preparation and model training",
+    add_completion=True,
+    rich_markup_mode="rich",
+)
+
+console = Console(force_terminal=True, color_system="auto", markup=True, soft_wrap=True, highlight=False)
+
+# ============================================================================
+# SHARED UTILITIES
+# ============================================================================
+
+def _fail(msg: str):
+    """Print error message and exit."""
+    console.print(f"❌ [red]Error:[/red] {msg}")
+    raise typer.Exit(1)
+
+def _print_header(title: str):
+    """Print a formatted header."""
+    console.print(f"\n{title}")
+    console.print("=" * 50)
+
+def _print_kv(items: List[tuple]):
+    """Print key-value pairs in a table format."""
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="cyan")
+    table.add_column()
+    for key, value in items:
+        table.add_row(key, str(value))
+    console.print(table)
+
+def _get_model_family(model_name: str) -> str:
+    """Extract model family from model name."""
+    model_lower = (model_name or "").lower()
+    if "qwen" in model_lower:
+        return "qwen"
+    elif "gemma" in model_lower:
+        return "gemma" 
+    elif "llama" in model_lower:
+        return "llama"
+    elif "mistral" in model_lower:
+        return "mistral"
+    else:
+        return "unknown"
+
+def _list_cached_datasets() -> List[str]:
+    """List available processed datasets."""
+    datasets = []
+    data_dir = Path("data")
+    
+    if not data_dir.exists():
+        return datasets
+    
+    for item in data_dir.iterdir():
+        if item.is_dir():
+            # Check if it looks like a processed dataset
+            if any((item / f).exists() for f in ["dataset_info.json", "state.json"]) or \
+               any(f.suffix == ".arrow" for f in item.glob("*.arrow")):
+                datasets.append(str(item))
+    
+    # Sort by modification time (newest first)
+    datasets.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    return datasets
+
+def _load_dataset_config(dataset_path: str) -> dict:
+    """Load dataset configuration if available."""
+    config_file = Path(dataset_path) / "dataset_config.json"
+    if config_file.exists():
+        try:
+            with open(config_file) as f:
+                return json.load(f)
+        except Exception as e:
+            console.print(f"⚠️  Warning: Could not load dataset config: {e}", style="yellow")
+    return {}
+
+# ============================================================================
+# DATASET PREPARATION COMMANDS
+# ============================================================================
+
+# Import dataset preparation functionality
+def _lazy_import_dataset_prep():
+    """Lazy import of dataset preparation to avoid slow startup."""
+    try:
+        from opensloth.dataset import (
+            DatasetPrepConfig,
+            BaseDatasetPreparer,
+            QwenDatasetPreparer,
+            GemmaDatasetPreparer
+        )
+        return DatasetPrepConfig, BaseDatasetPreparer, QwenDatasetPreparer, GemmaDatasetPreparer
+    except ImportError as e:
+        _fail(f"Dataset preparation modules not available: {e}")
+
+def _get_chat_template():
+    """Lazy import of Unsloth chat template utilities."""
+    try:
+        from unsloth.chat_templates import get_chat_template
+        return get_chat_template
+    except ImportError:
+        return None
+
+# Chat template configurations
+CHAT_TEMPLATES = {
+    "chatml": {
+        "description": "ChatML format (Qwen, OpenHermes, etc.)",
+        "instruction_part": "<|im_start|>user\n",
+        "response_part": "<|im_start|>assistant\n",
+        "train_on_target_only": True,
+    },
+    "qwen-2.5": {
+        "description": "Qwen 2.5 format",
+        "instruction_part": "<|im_start|>user\n",
+        "response_part": "<|im_start|>assistant\n",
+        "train_on_target_only": True,
+    },
+    "llama-3": {
+        "description": "Llama 3 format",
+        "instruction_part": "<|start_header_id|>user<|end_header_id|>\n\n",
+        "response_part": "<|start_header_id|>assistant<|end_header_id|>\n\n",
+        "train_on_target_only": True,
+    },
+    "gemma": {
+        "description": "Gemma format",
+        "instruction_part": "<start_of_turn>user\n",
+        "response_part": "<start_of_turn>model\n",
+        "train_on_target_only": True,
+    },
+    "mistral": {
+        "description": "Mistral Instruct format",
+        "instruction_part": "[INST] ",
+        "response_part": " [/INST]",
+        "train_on_target_only": True,
+    },
+}
+
+# Model detection heuristics for auto-template
+NAME_MAP: Dict[str, str] = {
+    r"\bqwen\s*3\b": "chatml",
+    r"\bqwen\s*2\.?5\b": "qwen-2.5", 
+    r"\bqwen\b": "chatml",
+    r"\bllama[-\s]*3\b": "llama-3",
+    r"\bgemma\b": "gemma",
+    r"\bmixtral\b": "mistral",
+    r"\bmistral\b": "mistral",
+}
+
+def _detect_template_by_model_name(model_name: str) -> Optional[str]:
+    """Auto-detect chat template from model name."""
+    if not model_name:
+        return None
+    
+    name_lower = model_name.lower()
+    for pattern, template_key in NAME_MAP.items():
+        if re.search(pattern, name_lower):
+            return template_key
+    return None
+
+def _apply_fallback_template(config: dict, model_name: str) -> bool:
+    """Apply auto-detected template for target-only training."""
+    if not config.get("train_on_target_only"):
+        return False
+    
+    if config.get("instruction_part") and config.get("response_part"):
+        return False  # Already configured
+    
+    detected_template = _detect_template_by_model_name(model_name)
+    if not detected_template or detected_template not in CHAT_TEMPLATES:
+        return False
+    
+    template_config = CHAT_TEMPLATES[detected_template]
+    config.update({
+        "chat_template": detected_template,
+        "instruction_part": template_config["instruction_part"],
+        "response_part": template_config["response_part"],
+        "train_on_target_only": template_config["train_on_target_only"],
+    })
+    
+    console.print(f"🎯 Auto-detected template: [bold]{detected_template}[/bold] (from model: {model_name})")
+    return True
+
+def _generate_dataset_name(model_name: str, dataset_name: str, num_samples: int, max_seq_length: int = 4096) -> str:
+    """Auto-generate dataset directory name."""
+    today = datetime.now().strftime("%m%d")
+    model_family = _get_model_family(model_name)
+    dataset_short = dataset_name.split('/')[-1].replace('-', '_').lower()
+    return f"{model_family}_{dataset_short}_n{num_samples}_l{max_seq_length}_{today}"
+
+def _execute_dataset_preparation(config: dict):
+    """Execute dataset preparation."""
+    console.print(f"\n🔄 Starting dataset preparation...")
+    
+    # Lazy import and select preparer
+    DatasetPrepConfig, BaseDatasetPreparer, QwenDatasetPreparer, GemmaDatasetPreparer = _lazy_import_dataset_prep()
+    
+    model_family = _get_model_family(config["tok_name"])
+    if model_family == "qwen":
+        preparer = QwenDatasetPreparer()
+    elif model_family == "gemma":
+        preparer = GemmaDatasetPreparer()
+    else:
+        console.print("⚠️  Could not detect model family, defaulting to Qwen", style="yellow")
+        preparer = QwenDatasetPreparer()
+    
+    console.print("📝 [bold]Processing Dataset[/bold]")
+    console.print("-" * 50)
+    
+    output_dir = preparer.run_with_config(config)
+    
+    console.print(f"\n🎉 [bold green]Dataset preparation completed![/bold green]")
+    console.print(f"📁 Dataset saved to: [bold]{output_dir}[/bold]")
+    
+    # Show next steps
+    console.print(f"\n📝 [bold]Next Steps:[/bold]")
+    console.print(f"1. Train with dataset: [cyan]os train {output_dir}[/cyan]")
+    console.print(f"2. Inspect dataset: [cyan]os info {output_dir}[/cyan]")
+    
+    return output_dir
+
+@app.command("prepare-data")
+def prepare_data(
+    # Model (required)
+    model: Annotated[str, typer.Option("--model", "-m", help="🤖 HuggingFace model identifier (REQUIRED)")],
+    
+    # Data source (one is required)
+    input_file: Annotated[Optional[str], typer.Argument(help="📄 Local JSON/JSONL file, or use --dataset for HuggingFace")] = None,
+    dataset: Annotated[Optional[str], typer.Option("--dataset", "-d", help="📊 HuggingFace dataset name")] = None,
+    
+    # Chat template settings
+    chat_template: Annotated[Optional[str], typer.Option("--chat-template", "-t", help="💬 Chat template (see list-templates)")] = None,
+    target_only: Annotated[bool, typer.Option("--target-only/--full-conversation", help="🎯 Train only on assistant responses")] = False,
+    instruction_part: Annotated[Optional[str], typer.Option(help="👤 Manual instruction part (for target-only)")] = None,
+    response_part: Annotated[Optional[str], typer.Option(help="🤖 Manual response part (for target-only)")] = None,
+    
+    # Dataset settings
+    split: Annotated[str, typer.Option(help="📂 Dataset split")] = "train",
+    samples: Annotated[int, typer.Option("--samples", "-n", help="🔢 Number of samples (-1 for all)")] = 1000,
+    max_seq_length: Annotated[int, typer.Option("--max-seq-length", help="📏 Max sequence length (tokens)")] = 4096,
+    
+    # Processing settings
+    workers: Annotated[int, typer.Option("--workers", "-w", help="⚡ Number of workers")] = 4,
+    output: Annotated[Optional[str], typer.Option("--output", "-o", help="📁 Output directory")] = None,
+    
+    # Utility
+    debug: Annotated[int, typer.Option(help="🐛 Debug samples to preview")] = 0,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="👀 Show config without processing")] = False,
+    force: Annotated[bool, typer.Option("--force", "-f", help="💪 Overwrite existing output")] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="✅ Skip confirmation")] = False,
+):
+    """
+    📝 Prepare dataset for fine-tuning
+    
+    Process conversational datasets into OpenSloth training format.
+    
+    **Examples:**
+    
+    • **Quick start with template:**
+      [cyan]os prepare-data my_data.json --model unsloth/Qwen2.5-7B-Instruct --chat-template chatml[/cyan]
+    
+    • **HuggingFace dataset:**
+      [cyan]os prepare-data --dataset mlabonne/FineTome-100k --model unsloth/Qwen2.5-7B-Instruct --chat-template chatml[/cyan]
+    
+    • **Target-only training:**
+      [cyan]os prepare-data my_data.json --model MODEL --target-only --chat-template chatml[/cyan]
+    
+    **💡 Tips:**
+    • Use `os list-templates` to see available chat templates
+    • Use `--debug 5` to preview data processing
+    • Output auto-named if not specified
+    """
+    
+    try:
+        # Validate inputs
+        if not input_file and not dataset:
+            _fail("Must specify either input file or --dataset for HuggingFace datasets")
+        
+        if input_file and dataset:
+            _fail("Cannot specify both input file and --dataset")
+        
+        actual_dataset = input_file if input_file else dataset
+        
+        # Build configuration
+        config = {
+            "tok_name": model,
+            "dataset_name": actual_dataset,
+            "split": split,
+            "num_samples": samples,
+            "num_proc": workers,
+            "max_seq_length": max_seq_length,
+            "debug": debug,
+            "train_on_target_only": target_only,
+        }
+        
+        if input_file:
+            config["input_file"] = input_file
+        
+        # Apply chat template configuration
+        if chat_template:
+            if chat_template not in CHAT_TEMPLATES:
+                available = ', '.join(CHAT_TEMPLATES.keys())
+                _fail(f"Unknown chat template: {chat_template}\nAvailable: {available}")
+            
+            template_config = CHAT_TEMPLATES[chat_template]
+            config.update({
+                "chat_template": chat_template,
+                "train_on_target_only": template_config["train_on_target_only"],
+                "instruction_part": template_config["instruction_part"],
+                "response_part": template_config["response_part"],
+            })
+            console.print(f"📋 Applied chat template: [bold]{chat_template}[/bold]")
+        else:
+            # Manual configuration
+            if instruction_part:
+                config["instruction_part"] = instruction_part
+            if response_part:
+                config["response_part"] = response_part
+        
+        # Validate target-only configuration with fallback
+        if target_only:
+            if not config.get("instruction_part") or not config.get("response_part"):
+                fallback_applied = _apply_fallback_template(config, model)
+                if not fallback_applied:
+                    _fail("Target-only training requires --chat-template or manual --instruction-part and --response-part")
+        
+        # Setup output directory
+        if not output:
+            output = f"data/{_generate_dataset_name(model, actual_dataset, samples, max_seq_length)}"
+        
+        if os.path.exists(output) and not force:
+            _fail(f"Output directory exists: {output}\nUse --force to overwrite")
+        
+        config["output_dir"] = output
+        
+        # Show configuration summary
+        _print_header("🎯 [bold]Dataset Preparation Configuration[/bold]")
+        info_items = [
+            ("🤖 Model:", model),
+            ("📊 Dataset:", actual_dataset),
+            ("📂 Split:", split),
+            ("🔢 Samples:", str(samples) if samples > 0 else "All"),
+            ("📏 Max Length:", f"{max_seq_length} tokens"),
+            ("⚡ Workers:", str(workers)),
+            ("📁 Output:", output),
+            ("🎯 Target Only:", "✅" if target_only else "❌"),
+        ]
+        
+        if config.get("chat_template"):
+            info_items.append(("💬 Chat Template:", config["chat_template"]))
+        
+        _print_kv(info_items)
+        
+        # Handle dry run
+        if dry_run:
+            console.print("\n👀 [bold yellow]Dry run - configuration shown above[/bold yellow]")
+            console.print("\n📋 Full configuration:")
+            console.print(json.dumps(config, indent=2))
+            return
+        
+        # Confirm before processing
+        if not yes:
+            if not typer.confirm(f"\n🚀 Start processing dataset?"):
+                console.print("❌ Cancelled")
+                raise typer.Exit(0)
+        
+        # Execute preparation
+        _execute_dataset_preparation(config)
+        
+    except typer.Exit:
+        raise
+    except KeyboardInterrupt:
+        console.print(f"\n⏹️  Interrupted by user")
+        raise typer.Exit(130)
+    except Exception as e:
+        console.print(f"\n❌ [bold red]Error: {e}[/bold red]")
+        raise typer.Exit(1)
+
+@app.command("list-templates")
+def list_templates():
+    """📋 List available chat templates"""
+    table = Table(title="Available Chat Templates")
+    table.add_column("Name", style="cyan")
+    table.add_column("Description", style="green")
+    table.add_column("Instruction Part", style="yellow")
+    table.add_column("Response Part", style="magenta")
+    
+    for name, info in CHAT_TEMPLATES.items():
+        # Escape Rich markup characters
+        instruction_preview = info["instruction_part"][:20].replace("[", r"\[").replace("]", r"\]") + "..."
+        response_preview = info["response_part"][:20].replace("[", r"\[").replace("]", r"\]") + "..."
+        
+        table.add_row(
+            name, 
+            info["description"],
+            instruction_preview,
+            response_preview
+        )
+    
+    console.print(table)
+    console.print("\n💡 Use [bold]--chat-template [name][/bold] with prepare-data")
+
+# ============================================================================
+# TRAINING COMMANDS  
+# ============================================================================
+
+# Training presets
+TRAINING_PRESETS = {
+    "quick": {
+        "description": "Quick test run (50 steps)",
+        "config": {
+            "training_args": {
+                "max_steps": 50,
+                "per_device_train_batch_size": 1,
+                "gradient_accumulation_steps": 4,
+                "learning_rate": 2e-4,
+                "logging_steps": 1,
+                "save_total_limit": 1,
+                "report_to": "none",
+            }
+        }
+    },
+    "small": {
+        "description": "Small models < 3B params",
+        "config": {
+            "opensloth_config": {
+                "fast_model_args": {
+                    "max_seq_length": 2048,
+                    "load_in_4bit": True,
+                },
+                "lora_args": {
+                    "r": 16,
+                    "lora_alpha": 32,
+                }
+            },
+            "training_args": {
+                "per_device_train_batch_size": 4,
+                "gradient_accumulation_steps": 4,
+                "learning_rate": 2e-4,
+                "num_train_epochs": 3,
+                "warmup_steps": 100,
+            }
+        }
+    },
+    "large": {
+        "description": "Large models > 7B params",
+        "config": {
+            "opensloth_config": {
+                "fast_model_args": {
+                    "max_seq_length": 4096,
+                    "load_in_4bit": True,
+                },
+                "lora_args": {
+                    "r": 8,
+                    "lora_alpha": 16,
+                }
+            },
+            "training_args": {
+                "per_device_train_batch_size": 1,
+                "gradient_accumulation_steps": 16,
+                "learning_rate": 1e-4,
+                "num_train_epochs": 2,
+                "warmup_steps": 50,
+            }
+        }
+    },
+    "memory-efficient": {
+        "description": "Lowest memory usage",
+        "config": {
+            "opensloth_config": {
+                "fast_model_args": {
+                    "max_seq_length": 1024,
+                    "load_in_4bit": True,
+                },
+                "lora_args": {
+                    "r": 4,
+                    "lora_alpha": 8,
+                }
+            },
+            "training_args": {
+                "per_device_train_batch_size": 1,
+                "gradient_accumulation_steps": 8,
+                "learning_rate": 3e-4,
+                "optim": "adamw_8bit",
+            }
+        }
+    }
+}
+
+def _get_available_gpus() -> List[int]:
+    """Get available GPU indices."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return list(range(torch.cuda.device_count()))
+    except ImportError:
+        pass
+    return [0]
+
+def _generate_output_dir(model_name: str, dataset_path: str) -> str:
+    """Generate output directory name."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_short = model_name.split('/')[-1] if '/' in model_name else model_name
+    model_short = model_short.replace('-', '_')
+    dataset_name = Path(dataset_path).name
+    return f"outputs/{model_short}_{dataset_name}_{timestamp}"
+
+def _merge_configs(base: dict, override: dict) -> dict:
+    """Recursively merge configuration dictionaries."""
+    result = base.copy()
+    for key, value in override.items():
+        if value is None:
+            continue
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _merge_configs(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+def _apply_training_defaults(config: dict, dataset_path: str) -> dict:
+    """Apply training defaults, inheriting from dataset config."""
+    dataset_config = _load_dataset_config(dataset_path)
+    
+    # Default configuration
+    default_config = {
+        "opensloth_config": {
+            "devices": [0],
+            "sequence_packing": True,
+            "log_level": "info",
+            "fast_model_args": {
+                "max_seq_length": 4096,
+                "load_in_4bit": True,
+                "load_in_8bit": False,
+                "full_finetuning": False,
+            },
+            "lora_args": {
+                "r": 8,
+                "lora_alpha": 16,
+                "lora_dropout": 0.0,
+                "target_modules": [
+                    "q_proj", "k_proj", "v_proj", "o_proj",
+                    "gate_proj", "up_proj", "down_proj"
+                ],
+            }
+        },
+        "training_args": {
+            "per_device_train_batch_size": 2,
+            "gradient_accumulation_steps": 4,
+            "learning_rate": 2e-4,
+            "num_train_epochs": 3,
+            "lr_scheduler_type": "linear",
+            "warmup_steps": 10,
+            "logging_steps": 1,
+            "save_total_limit": 2,
+            "optim": "adamw_8bit",
+            "weight_decay": 0.01,
+            "report_to": "tensorboard",
+        }
+    }
+    
+    # Inherit from dataset configuration
+    if dataset_config:
+        console.print("📋 [bold]Inheriting from dataset configuration...[/bold]")
+        
+        # Inherit model
+        if (not config.get("opensloth_config", {}).get("fast_model_args", {}).get("model_name") and 
+            dataset_config.get("tok_name")):
+            console.print(f"  🤖 Model: {dataset_config['tok_name']}")
+            default_config["opensloth_config"]["fast_model_args"]["model_name"] = dataset_config["tok_name"]
+        
+        # Inherit max_seq_length
+        if dataset_config.get("max_seq_length"):
+            dataset_max_length = dataset_config["max_seq_length"]
+            if not config.get("opensloth_config", {}).get("fast_model_args", {}).get("max_seq_length"):
+                console.print(f"  📏 Max Length: {dataset_max_length}")
+                default_config["opensloth_config"]["fast_model_args"]["max_seq_length"] = dataset_max_length
+    
+    # Merge defaults with user config
+    result = _merge_configs(default_config, config)
+    
+    # Remove LoRA args if full finetuning
+    if result["opensloth_config"]["fast_model_args"].get("full_finetuning"):
+        result["opensloth_config"]["lora_args"] = None
+    
+    return result
+
+def _validate_training_config(config: dict, dataset_path: str):
+    """Validate training configuration."""
+    opensloth_config = config.get("opensloth_config", {})
+    fast_model_args = opensloth_config.get("fast_model_args", {})
+    
+    # Check required fields
+    if not fast_model_args.get("model_name"):
+        _fail("Model name is required")
+    
+    # Check dataset exists
+    if not os.path.exists(dataset_path):
+        _fail(f"Dataset directory does not exist: {dataset_path}")
+    
+    # Check model/dataset compatibility
+    dataset_config = _load_dataset_config(dataset_path)
+    if dataset_config:
+        current_model = fast_model_args["model_name"]
+        dataset_model = dataset_config.get("tok_name", "")
+        
+        current_family = _get_model_family(current_model)
+        dataset_family = _get_model_family(dataset_model)
+        
+        if current_family != dataset_family and dataset_family != "unknown":
+            console.print(f"⚠️  [yellow]Model family mismatch: dataset={dataset_family}, training={current_family}[/yellow]")
+        
+        # Check sequence length
+        training_max_length = fast_model_args.get("max_seq_length", 4096)
+        dataset_max_length = dataset_config.get("max_seq_length", 4096)
+        
+        if training_max_length < dataset_max_length:
+            _fail(f"Training max_seq_length ({training_max_length}) < dataset max_seq_length ({dataset_max_length})")
+
+def _print_training_config_summary(config: dict, dataset_path: str):
+    """Print training configuration summary."""
+    opensloth_config = config["opensloth_config"]
+    training_args = config["training_args"]
+    fast_model_args = opensloth_config["fast_model_args"]
+    lora_args = opensloth_config.get("lora_args")
+    
+    _print_header("🎯 [bold]Training Configuration[/bold]")
+    
+    items = [
+        ("🤖 Model:", fast_model_args['model_name']),
+        ("📊 Dataset:", dataset_path),
+        ("💾 Output:", training_args['output_dir']),
+        ("🔧 GPUs:", f"{opensloth_config['devices']} ({len(opensloth_config['devices'])} GPU{'s' if len(opensloth_config['devices']) > 1 else ''})"),
+        ("📏 Max Length:", str(fast_model_args['max_seq_length'])),
+        ("🔢 Quantization:", "4-bit" if fast_model_args.get('load_in_4bit') else "8-bit" if fast_model_args.get('load_in_8bit') else "none"),
+    ]
+    
+    # Training type
+    if fast_model_args.get('full_finetuning'):
+        items.append(("🎯 Training Type:", "Full Fine-tuning"))
+    else:
+        items.append(("🎯 Training Type:", f"LoRA (r={lora_args.get('r', 8)}, α={lora_args.get('lora_alpha', 16)})"))
+    
+    # Training parameters
+    batch_size = training_args['per_device_train_batch_size']
+    accumulation = training_args['gradient_accumulation_steps']
+    effective_batch = batch_size * accumulation * len(opensloth_config['devices'])
+    items.extend([
+        ("📦 Batch Size:", f"{batch_size} per GPU (effective: {effective_batch})"),
+        ("📚 Learning Rate:", str(training_args['learning_rate'])),
+        ("🔄 Epochs:", str(training_args.get('num_train_epochs', 'not set'))),
+        ("🔥 Optimizer:", training_args['optim']),
+        ("📊 Logging:", training_args['report_to']),
+    ])
+    
+    _print_kv(items)
+
+@app.command("train")
+def train_model(
+    # Required
+    dataset: Annotated[str, typer.Argument(help="📊 Path to processed dataset directory")],
+    
+    # Model (auto-detect from dataset if not specified)
+    model: Annotated[Optional[str], typer.Option("--model", "-m", help="🤖 Model (auto-detect from dataset if not specified)")] = None,
+    
+    # Output
+    output: Annotated[Optional[str], typer.Option("--output", "-o", help="💾 Output directory")] = None,
+    
+    # Hardware
+    gpus: Annotated[str, typer.Option("--gpus", "-g", help="🔧 GPU indices (e.g. '0' or '0,1,2,3')")] = "0",
+    
+    # Training parameters
+    epochs: Annotated[Optional[int], typer.Option("--epochs", help="🔄 Number of epochs")] = None,
+    max_steps: Annotated[Optional[int], typer.Option("--max-steps", help="⏰ Max training steps")] = None,
+    batch_size: Annotated[Optional[int], typer.Option("--batch-size", help="📦 Batch size per GPU")] = None,
+    learning_rate: Annotated[Optional[float], typer.Option("--lr", help="📚 Learning rate")] = None,
+    
+    # Model settings
+    max_seq_length: Annotated[Optional[int], typer.Option("--max-seq-length", help="📏 Max sequence length")] = None,
+    load_4bit: Annotated[bool, typer.Option("--4bit/--no-4bit", help="🔢 4-bit quantization")] = True,
+    full_finetune: Annotated[bool, typer.Option("--full-finetune", help="🎯 Full parameter training")] = False,
+    
+    # LoRA settings
+    lora_r: Annotated[Optional[int], typer.Option("--lora-r", help="🎯 LoRA rank")] = None,
+    lora_alpha: Annotated[Optional[int], typer.Option("--lora-alpha", help="🎯 LoRA alpha")] = None,
+    
+    # Preset and utility
+    preset: Annotated[Optional[str], typer.Option("--preset", help="⚙️ Use preset configuration")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="👀 Show config without training")] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="✅ Skip confirmations")] = False,
+):
+    """
+    🚀 Train a model with pre-processed dataset
+    
+    **Examples:**
+    
+    • **Basic training:**
+      [cyan]os train data/my_dataset[/cyan]
+    
+    • **Multi-GPU:**
+      [cyan]os train data/my_dataset --gpus 0,1,2,3[/cyan]
+    
+    • **Quick test:**
+      [cyan]os train data/my_dataset --preset quick[/cyan]
+    
+    • **Custom settings:**
+      [cyan]os train data/my_dataset --model unsloth/Qwen2.5-7B-Instruct --epochs 5 --batch-size 2[/cyan]
+    
+    **💡 Tips:**
+    • Model auto-detected from dataset if not specified
+    • Use `os list-presets` to see available presets
+    • Use `--dry-run` to preview configuration
+    """
+    
+    try:
+        # Interactive dataset selection if not provided or doesn't exist
+        if not os.path.exists(dataset):
+            console.print(f"❌ Dataset not found: {dataset}")
+            
+            datasets = _list_cached_datasets()
+            if not datasets:
+                console.print("💡 No datasets found. Use [bold]os prepare-data[/bold] first")
+                raise typer.Exit(1)
+            
+            console.print("\n📂 Available datasets:")
+            for i, ds in enumerate(datasets, 1):
+                console.print(f"  {i}. {ds}")
+            
+            choice = typer.prompt("\n🔢 Select dataset number", type=int)
+            if choice < 1 or choice > len(datasets):
+                _fail("Invalid selection")
+            dataset = datasets[choice-1]
+            console.print(f"✅ Selected: [bold]{dataset}[/bold]")
+        
+        # Start with empty config
+        config = {"opensloth_config": {}, "training_args": {}}
+        
+        # Apply preset if specified
+        if preset:
+            if preset not in TRAINING_PRESETS:
+                available = ', '.join(TRAINING_PRESETS.keys())
+                _fail(f"Unknown preset: {preset}\nAvailable: {available}")
+            
+            console.print(f"📋 Applying preset: [bold]{preset}[/bold]")
+            preset_config = TRAINING_PRESETS[preset]["config"]
+            config = _merge_configs(config, preset_config)
+        
+        # Build CLI configuration
+        cli_config = {"opensloth_config": {}, "training_args": {}}
+        
+        # Parse GPUs
+        try:
+            devices = [int(d.strip()) for d in gpus.split(",")]
+            cli_config["opensloth_config"]["devices"] = devices
+        except ValueError:
+            _fail(f"Invalid GPU specification: {gpus}")
+        
+        # Model settings
+        fast_model_args = {}
+        if model:
+            fast_model_args["model_name"] = model
+        if max_seq_length:
+            fast_model_args["max_seq_length"] = max_seq_length
+        fast_model_args["load_in_4bit"] = load_4bit
+        fast_model_args["full_finetuning"] = full_finetune
+        cli_config["opensloth_config"]["fast_model_args"] = fast_model_args
+        
+        # LoRA settings
+        if not full_finetune and (lora_r or lora_alpha):
+            lora_args = {}
+            if lora_r:
+                lora_args["r"] = lora_r
+            if lora_alpha:
+                lora_args["lora_alpha"] = lora_alpha
+            cli_config["opensloth_config"]["lora_args"] = lora_args
+        
+        # Training arguments
+        training_args = {}
+        if epochs:
+            training_args["num_train_epochs"] = epochs
+        if max_steps:
+            training_args["max_steps"] = max_steps
+        if batch_size:
+            training_args["per_device_train_batch_size"] = batch_size
+        if learning_rate:
+            training_args["learning_rate"] = learning_rate
+        cli_config["training_args"] = training_args
+        
+        # Merge configurations
+        config = _merge_configs(config, cli_config)
+        
+        # Apply defaults with dataset inheritance
+        config = _apply_training_defaults(config, dataset)
+        config["opensloth_config"]["data_cache_path"] = dataset
+        
+        # Auto-generate output directory
+        final_model = config["opensloth_config"]["fast_model_args"]["model_name"]
+        if not output:
+            output = _generate_output_dir(final_model, dataset)
+        config["training_args"]["output_dir"] = output
+        
+        # Validate configuration
+        _validate_training_config(config, dataset)
+        
+        # Print configuration summary
+        _print_training_config_summary(config, dataset)
+        
+        if dry_run:
+            console.print("\n👀 [bold yellow]Dry run - configuration shown above[/bold yellow]")
+            console.print("\n📋 Full configuration:")
+            console.print(json.dumps(config, indent=2))
+            return
+        
+        # Final confirmation
+        if not yes:
+            if not typer.confirm(f"\n🚀 Start training?"):
+                console.print("❌ Cancelled")
+                raise typer.Exit(0)
+        
+        # Run training
+        console.print(f"\n🔄 Starting training...")
+        
+        # Import training functions
+        from opensloth.scripts.opensloth_sft_trainer import run_mp_training, setup_envs
+        from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
+        
+        # Create Pydantic config objects
+        opensloth_config = OpenSlothConfig(**config["opensloth_config"])
+        training_args = TrainingArguments(**config["training_args"])
+        
+        # Setup environment and run training
+        setup_envs(opensloth_config, training_args)
+        run_mp_training(opensloth_config.devices, opensloth_config, training_args)
+        
+        console.print(f"\n🎉 [bold green]Training completed![/bold green]")
+        console.print(f"📁 Model saved to: [bold]{output}[/bold]")
+        
+    except typer.Exit:
+        raise
+    except KeyboardInterrupt:
+        console.print(f"\n⏹️  Interrupted by user")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"\n❌ [bold red]Error: {e}[/bold red]")
+        raise typer.Exit(1)
+
+@app.command("list-presets")
+def list_presets():
+    """📋 List available training presets"""
+    table = Table(title="Training Presets")
+    table.add_column("Name", style="cyan")
+    table.add_column("Description", style="green")
+    
+    for name, info in TRAINING_PRESETS.items():
+        table.add_row(name, info["description"])
+    
+    console.print(table)
+    console.print("\n💡 Use [bold]--preset [name][/bold] with train command")
+
+# ============================================================================
+# INFO COMMANDS
+# ============================================================================
+
+@app.command("list-datasets")
+def list_datasets():
+    """📂 List available processed datasets"""
+    datasets = _list_cached_datasets()
+    
+    if not datasets:
+        console.print("📂 No processed datasets found in data/ directory")
+        console.print("💡 Use [bold]os prepare-data[/bold] to prepare a dataset first")
+        return
+    
+    table = Table(title="Available Datasets")
+    table.add_column("Dataset Path", style="cyan")
+    table.add_column("Modified", style="yellow")
+    table.add_column("Samples", style="green")
+    
+    for path in datasets:
+        mod_time = datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
+        
+        # Try to get sample count
+        dataset_config = _load_dataset_config(path)
+        samples = str(dataset_config.get("num_samples", "Unknown")) if dataset_config else "Unknown"
+        
+        table.add_row(path, mod_time, samples)
+    
+    console.print(table)
+    console.print(f"\n💡 Use [bold]os train <dataset_path>[/bold] to train")
+
+@app.command("info")
+def dataset_info(
+    dataset: Annotated[str, typer.Argument(help="Path to dataset directory")]
+):
+    """📖 Show dataset information"""
+    if not os.path.exists(dataset):
+        _fail(f"Dataset not found: {dataset}")
+    
+    dataset_config = _load_dataset_config(dataset)
+    
+    if not dataset_config:
+        _fail(f"No configuration found in {dataset}")
+    
+    _print_header(f"📊 [bold]Dataset Information: {dataset}[/bold]")
+    
+    items = [
+        ("🤖 Model/Tokenizer:", dataset_config.get("tok_name", "Unknown")),
+        ("📊 Original Dataset:", dataset_config.get("dataset_name", "Unknown")),
+        ("🔢 Samples:", str(dataset_config.get("num_samples", "Unknown"))),
+        ("📏 Max Seq Length:", str(dataset_config.get("max_seq_length", "Unknown"))),
+        ("💬 Chat Template:", dataset_config.get("chat_template", "None")),
+        ("🎯 Target Only:", "✅" if dataset_config.get("train_on_target_only") else "❌"),
+        ("📂 Split:", dataset_config.get("split", "Unknown")),
+    ]
+    
+    _print_kv(items)
+    
+    # Show compatible training command
+    console.print(f"\n🚀 [bold]Training Command:[/bold]")
+    console.print(f"[cyan]os train {dataset}[/cyan]")
+    
+    # Model family compatibility
+    model_family = _get_model_family(dataset_config.get("tok_name", ""))
+    console.print(f"\n💡 [bold]Compatibility:[/bold]")
+    console.print(f"• Dataset prepared for [cyan]{model_family}[/cyan] model family")
+    console.print(f"• Training models must support max_seq_length >= {dataset_config.get('max_seq_length', 'unknown')}")
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+@app.callback(invoke_without_command=True)
+def main_callback(
+    ctx: typer.Context,
+    version: Annotated[bool, typer.Option("--version", help="Show version")] = False
+):
+    """🦥 OpenSloth - Unified CLI for LLM fine-tuning"""
+    if version:
+        console.print("OpenSloth CLI v1.0.0")
+        raise typer.Exit()
+    
+    if ctx.invoked_subcommand is None:
+        console.print("🦥 [bold]OpenSloth - Unified CLI[/bold]")
+        console.print("\n📝 [bold]Workflow:[/bold]")
+        console.print("1. [cyan]os prepare-data[/cyan] - Prepare dataset for training")
+        console.print("2. [cyan]os train[/cyan] - Train model with prepared dataset")
+        console.print("\n💡 [bold]Quick Examples:[/bold]")
+        console.print("• [cyan]os prepare-data my_data.json --model unsloth/Qwen2.5-7B-Instruct --chat-template chatml[/cyan]")
+        console.print("• [cyan]os train data/my_dataset --gpus 0,1,2,3[/cyan]")
+        console.print("\n📋 [bold]Commands:[/bold]")
+        console.print("• [cyan]os prepare-data[/cyan] - Prepare dataset")
+        console.print("• [cyan]os train[/cyan] - Train model") 
+        console.print("• [cyan]os list-datasets[/cyan] - List available datasets")
+        console.print("• [cyan]os list-templates[/cyan] - List chat templates")
+        console.print("• [cyan]os list-presets[/cyan] - List training presets")
+        console.print("• [cyan]os info[/cyan] - Show dataset information")
+        console.print("\nUse [cyan]os [command] --help[/cyan] for detailed help")
+
+def main():
+    """Entry point for the unified CLI."""
+    try:
+        app()
+    except typer.Exit as e:
+        import sys
+        sys.exit(e.exit_code)
+    except KeyboardInterrupt:
+        import sys
+        sys.exit(130)
+
+if __name__ == "__main__":
+    main()

@@ -71,3 +71,4 @@ qwen_dataset
 tmp-Qwen-14B-250808/
 hf-models
 *-processed/
+*.backup
