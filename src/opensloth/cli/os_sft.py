@@ -53,6 +53,7 @@ def _build_cli_overrides(
     use_gradient_checkpointing: Optional[str],
     # Devices
     devices: Optional[str],
+    comm_backend: Optional[str],
 ) -> dict:
     """Helper to construct a nested dictionary of CLI overrides from authentic param names."""
     overrides: dict = {"opensloth_config": {}, "training_args": {}}
@@ -114,6 +115,10 @@ def _build_cli_overrides(
         except ValueError:
             raise typer.BadParameter("--devices must be a comma-separated list of integers, e.g. 0,1")
 
+    # Communication backend override
+    if comm_backend:
+        overrides["opensloth_config"]["comm_backend"] = comm_backend
+
     return overrides
 
 @app.command()
@@ -157,6 +162,7 @@ def train(
     devices: Optional[str] = typer.Option(None, "--devices", help="Comma-separated GPU indices (e.g., '0,1'). Overrides dataset config."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print configuration and exit without running."),
     use_tmux: bool = typer.Option(False, "--tmux", help="Use tmux for multi-GPU training."),
+    comm_backend: Optional[str] = typer.Option(None, "--comm-backend", help="Communication backend: allreduce (default) or async-ps"),
 ):
     """
     Trains a model using Supervised Fine-Tuning (SFT) on a prepared dataset.
@@ -173,8 +179,9 @@ def train(
         lora_targets=lora_targets, use_rslora=use_rslora, lora_bias=lora_bias, output=output, epochs=epochs, 
         max_steps=max_steps, batch_size=batch_size, grad_accum=grad_accum, lr=lr, 
         lr_scheduler_type=lr_scheduler_type, warmup_steps=warmup_steps, logging_steps=logging_steps, 
-        save_steps=save_steps, save_total_limit=save_total_limit, optim=optim, weight_decay=weight_decay, 
-        seed=seed, report_to=report_to, use_gradient_checkpointing=use_gradient_checkpointing, devices=devices,
+    save_steps=save_steps, save_total_limit=save_total_limit, optim=optim, weight_decay=weight_decay, 
+    seed=seed, report_to=report_to, use_gradient_checkpointing=use_gradient_checkpointing, devices=devices,
+    comm_backend=comm_backend,
     )
 
     builder = (

@@ -61,6 +61,7 @@ def _build_cli_overrides(
     report_to: Optional[str],
     seed: Optional[int],
     devices: Optional[str],
+    comm_backend: Optional[str],
 ) -> dict:
     """Helper to construct a nested dictionary of CLI overrides."""
     training_args = {
@@ -148,6 +149,9 @@ def _build_cli_overrides(
                 opensloth_overrides["devices"] = dev_list
         except ValueError:
             raise typer.BadParameter("--devices must be a comma-separated list of integers, e.g. 0,1")
+
+    if comm_backend:
+        opensloth_overrides["comm_backend"] = comm_backend
     
     # Always ensure opensloth_config exists even if empty for downstream builder logic
     overrides["opensloth_config"] = opensloth_overrides
@@ -204,6 +208,7 @@ def train(
     devices: Optional[str] = typer.Option(None, "--devices", help="Comma-separated GPU indices to use (overrides dataset)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the configuration and exit without running."),
     use_tmux: bool = typer.Option(False, "--tmux", help="Use tmux for multi-GPU training."),
+    comm_backend: Optional[str] = typer.Option(None, "--comm-backend", help="Communication backend: allreduce (default) or async-ps"),
 ):
     """
     Trains a model using Group Relative Policy Optimization (GRPO) on a prepared dataset.
@@ -219,9 +224,9 @@ def train(
         beta, group_size, task, rewards,
         temperature, top_p, top_k, min_p, max_new, max_prompt_len, max_seq_length,
         prompt_length_pct, eval_interval, save_interval, print_sample_every,
-        stop_sequences, no_custom_chat_template,
-        logging_steps, warmup_steps, weight_decay, max_steps,
-        save_total_limit, report_to, seed, devices,
+    stop_sequences, no_custom_chat_template,
+    logging_steps, warmup_steps, weight_decay, max_steps,
+    save_total_limit, report_to, seed, devices, comm_backend,
     )
     if model:
         cli_overrides.setdefault("opensloth_config", {}).setdefault("fast_model_args", {})["model_name"] = model

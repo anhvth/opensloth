@@ -1,333 +1,36 @@
-# Duration threshold constants
-DURATION_SHORT_SKIP = 3
-DURATION_SECONDS_IN_MINUTE = 60
-DURATION_SECONDS_IN_HOUR = 3600
-DURATION_MS_THRESHOLD = 0.1
-"""
-Enhanced logging configuration for opensloth with improved formatting and organization.
+"""Central logging utilities for OpenSloth.
+
+Includes:
+ - GPU/rank-aware structured logger (OpenslothLogger)
+ - Step / total timing helpers
+ - Print/stdout interception for cleaner multi-process + HF/transformers logs
+
+Design notes:
+ - Interception must be optional & idempotent (safe to call multiple times)
+ - Rank 0 keeps stderr printing outside tmux; all ranks log inside tmux
+ - We keep implementation light (no heavy dependencies beyond rich/loguru)
 """
 
+from __future__ import annotations
+
+import logging
 import os
 import sys
 import time
-import logging
 
 from rich.console import Console
 from rich.table import Table
 
-# from speedy_utils import setup_logger
-COUNT = 0
+# Duration threshold constants (after imports to satisfy Ruff E402 expectations)
+DURATION_SHORT_SKIP = 3
+DURATION_SECONDS_IN_MINUTE = 60
+DURATION_SECONDS_IN_HOUR = 3600
+DURATION_MS_THRESHOLD = 0.1
 
 
-def setup_comprehensive_logging_interception():
-    """
-    Comprehensive interception of logging output only (not stdout/stderr).
-    Redirects logging to loguru for unified logging with GPU context.
-    """
-    # Check if already intercepted to avoid duplicate setup
-    if hasattr(setup_comprehensive_logging_interception, '_intercepted'):
-        return
-    
-    class LoguruHandler(logging.Handler):
-        """Custom handler to redirect standard logging to loguru files"""
-        
-        def __init__(self):
-            super().__init__()
-            
-            # File handles for writing intercepted output
-            self.hf_log_file = None
-            
-            # Get GPU context
-            self.gpu_id = os.environ.get("OPENSLOTH_LOCAL_RANK", "0")
-            
-            # Setup log files
-            self._setup_log_files()
-        
-        def _setup_log_files(self):
-            """Setup log files for intercepted output"""
-            try:
-                output_dir = os.environ.get("OPENSLOTH_OUTPUT_DIR")
-                if output_dir:
-                    log_dir = os.path.join(output_dir, "logs")
-                    os.makedirs(log_dir, exist_ok=True)
-                    
-                    # HF library logs (standard logging)
-                    hf_log_path = os.path.join(log_dir, f"huggingface_gpu_{self.gpu_id}.log")
-                    self.hf_log_file = open(hf_log_path, 'a', encoding='utf-8')
-            except Exception:
-                pass
-        
-        def emit(self, record):
-            try:
-                # Format the message including logger name for context
-                message = record.getMessage()
-                if record.name and record.name != "root":
-                    message = f"[{record.name}] {message}"
-                
-                # Format timestamp
-                import datetime
-                timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-                
-                # Create log line with GPU context
-                log_line = f"{timestamp} | {record.levelname:<8} | GPU{self.gpu_id} | [HF] | {message}\n"
-                
-                # Write to file if available
-                if self.hf_log_file:
-                    try:
-                        self.hf_log_file.write(log_line)
-                        self.hf_log_file.flush()
-                    except Exception:
-                        pass
-                        
-            except Exception:
-                self.handleError(record)
-        
-        def close(self):
-            if self.hf_log_file:
-                try:
-                    self.hf_log_file.close()
-                except Exception:
-                    pass
-            super().close()
-    
-    # Remove existing handlers and add our interceptor
-    root_logger = logging.getLogger()
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
-    
-    loguru_handler = LoguruHandler()
-    loguru_handler.setLevel(logging.DEBUG)
-    root_logger.addHandler(loguru_handler)
-    root_logger.setLevel(logging.DEBUG)
-    
-    # Set reasonable levels for common libraries
-    logging.getLogger("transformers").setLevel(logging.INFO)
-    logging.getLogger("datasets").setLevel(logging.INFO)
-    logging.getLogger("accelerate").setLevel(logging.INFO)
-    logging.getLogger("trl").setLevel(logging.INFO)
-    logging.getLogger("unsloth").setLevel(logging.INFO)
-    # Suppress very verbose network logs
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("filelock").setLevel(logging.WARNING)
-    
-    # Mark as intercepted
-    setup_comprehensive_logging_interception._intercepted = True
 
 
-def setup_stdout_interception_for_training():
-    """
-    Setup stdout/stderr interception specifically for training phases.
-    This should be called when training starts.
-    """
-    # Check if already intercepted
-    if hasattr(setup_stdout_interception_for_training, '_intercepted'):
-        return
-    
-    class TrainingOutputInterceptor:
-        """Intercepts stdout/stderr during training only"""
-        
-        def __init__(self):
-            self.original_stdout = sys.stdout
-            self.original_stderr = sys.stderr
-            self.gpu_id = os.environ.get("OPENSLOTH_LOCAL_RANK", "0")
-            
-            # Setup training log file
-            self.training_log_file = None
-            try:
-                output_dir = os.environ.get("OPENSLOTH_OUTPUT_DIR")
-                if output_dir:
-                    log_dir = os.path.join(output_dir, "logs")
-                    os.makedirs(log_dir, exist_ok=True)
-                    
-                    training_log_path = os.path.join(log_dir, f"training_stdout_gpu_{self.gpu_id}.log")
-                    self.training_log_file = open(training_log_path, 'a', encoding='utf-8')
-            except Exception:
-                pass
-        
-        def write(self, text):
-            if not text or text.isspace():
-                return len(text) if text else 0
-            
-            # Format timestamp
-            import datetime
-            timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-            
-            text = text.strip()
-            if not text:
-                return 0
-            
-            # Create log line with GPU context
-            log_line = f"{timestamp} | INFO     | GPU{self.gpu_id} | [STDOUT] | {text}\n"
-            
-            # Write to file
-            if self.training_log_file:
-                try:
-                    self.training_log_file.write(log_line)
-                    self.training_log_file.flush()
-                except Exception:
-                    pass
-            
-            return len(text)
-        
-        def flush(self):
-            try:
-                if self.training_log_file:
-                    self.training_log_file.flush()
-            except Exception:
-                pass
-        
-        def close(self):
-            try:
-                if self.training_log_file:
-                    self.training_log_file.close()
-            except Exception:
-                pass
-    
-    # Only intercept if we're actually in training
-    if os.environ.get("OPENSLOTH_TRAINING_ACTIVE") == "1":
-        interceptor = TrainingOutputInterceptor()
-        sys.stdout = interceptor
-        sys.stderr = interceptor
-    
-    setup_stdout_interception_for_training._intercepted = True
 
-
-def disable_huggingface_console_callbacks():
-    """
-    Disable Hugging Face's default console callbacks that print training progress.
-    This should be called when setting up the trainer.
-    """
-    try:
-        # Import HF callback classes
-        from transformers.trainer_callback import (
-            ProgressCallback, 
-            PrinterCallback,
-            DefaultFlowCallback
-        )
-        
-        # Store original print methods to disable them
-        if hasattr(ProgressCallback, 'on_log'):
-            ProgressCallback._original_on_log = ProgressCallback.on_log
-            ProgressCallback.on_log = lambda self, args, state, control, logs=None, **kwargs: None
-        
-        if hasattr(PrinterCallback, 'on_log'):
-            PrinterCallback._original_on_log = PrinterCallback.on_log  
-            PrinterCallback.on_log = lambda self, args, state, control, logs=None, **kwargs: None
-            
-        # Also disable progress bar updates that print to stdout
-        if hasattr(ProgressCallback, 'on_step_end'):
-            ProgressCallback._original_on_step_end = ProgressCallback.on_step_end
-            ProgressCallback.on_step_end = lambda self, args, state, control, **kwargs: None
-        
-        if hasattr(ProgressCallback, 'on_epoch_end'):
-            ProgressCallback._original_on_epoch_end = ProgressCallback.on_epoch_end
-            ProgressCallback.on_epoch_end = lambda self, args, state, control, **kwargs: None
-            
-    except ImportError:
-        # HF not available or different version, skip
-        pass
-
-
-class OpenSlothTrainingLogCallback:
-    """
-    Custom callback to handle training progress logs through loguru with GPU context.
-    Replaces Hugging Face's default console logging.
-    """
-    
-    def __init__(self):
-        self.gpu_id = os.environ.get("OPENSLOTH_LOCAL_RANK", "0")
-        
-        # Setup log file for training progress
-        self.training_progress_file = None
-        try:
-            output_dir = os.environ.get("OPENSLOTH_OUTPUT_DIR")
-            if output_dir:
-                log_dir = os.path.join(output_dir, "logs")
-                os.makedirs(log_dir, exist_ok=True)
-                
-                # Training progress logs
-                progress_log_path = os.path.join(log_dir, f"training_progress_gpu_{self.gpu_id}.log")
-                self.training_progress_file = open(progress_log_path, 'a', encoding='utf-8')
-        except Exception:
-            pass
-    
-    def on_log(self, args, state, control, logs=None, **kwargs):
-        """Handle training progress logs through loguru"""
-        if logs is None:
-            return
-        
-        # Format timestamp
-        import datetime
-        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-        
-        # Format the logs nicely with GPU context
-        log_parts = []
-        for key, value in logs.items():
-            if isinstance(value, float):
-                if key in ['loss', 'train_loss', 'eval_loss']:
-                    log_parts.append(f"{key}={value:.4f}")
-                elif key in ['learning_rate']:
-                    log_parts.append(f"{key}={value:.2e}")
-                elif key in ['epoch']:
-                    log_parts.append(f"{key}={value:.2f}")
-                else:
-                    log_parts.append(f"{key}={value:.4f}")
-            else:
-                log_parts.append(f"{key}={value}")
-        
-        log_message = " | ".join(log_parts)
-        
-        # Create formatted log line
-        step = state.global_step if hasattr(state, 'global_step') else 0
-        log_line = f"{timestamp} | INFO     | GPU{self.gpu_id} | [STEP {step:>4}] | {log_message}\n"
-        
-        # Write to file
-        if self.training_progress_file:
-            try:
-                self.training_progress_file.write(log_line)
-                self.training_progress_file.flush()
-            except Exception:
-                pass
-    
-    def close(self):
-        """Close file handles"""
-        if self.training_progress_file:
-            try:
-                self.training_progress_file.close()
-            except Exception:
-                pass
-
-
-def add_opensloth_logging_callback(trainer):
-    """
-    Add OpenSloth's custom logging callback to the trainer.
-    This should be called after trainer creation.
-    """
-    # Remove default HF callbacks that print to console
-    callbacks_to_remove = []
-    
-    for callback in trainer.callback_handler.callbacks:
-        callback_name = callback.__class__.__name__
-        if callback_name in ['ProgressCallback', 'PrinterCallback']:
-            callbacks_to_remove.append(callback)
-    
-    for callback in callbacks_to_remove:
-        trainer.callback_handler.callbacks.remove(callback)
-    
-    # Add our custom callback
-    opensloth_callback = OpenSlothTrainingLogCallback()
-    trainer.add_callback(opensloth_callback)
-    
-    return trainer
-
-
-def setup_huggingface_logging_interception():
-    """
-    Legacy function for backward compatibility.
-    Now calls the comprehensive logging interception.
-    """
-    setup_comprehensive_logging_interception()
-    disable_huggingface_console_callbacks()
 
 
 class StepTimer:
@@ -446,7 +149,7 @@ class OpenslothLogger:
             )
             
             # Legacy training.log for backward compatibility (only on main rank)
-            if self.gpu_id == "0" or self.gpu_id == 0:
+            if self.gpu_id in {"0", 0}:  # PLR1714 satisfied
                 legacy_log_file = os.path.join(output_dir, "training.log")
                 self.logger.add(
                     legacy_log_file,
@@ -639,3 +342,116 @@ def get_opensloth_logger(allow_unknown_gpu=False) -> OpenslothLogger:
     return logger
 
 get_opensloth_logger.VALID_LOGGER = None
+
+
+# =============================
+# Stdout / logging interception
+# =============================
+_INTERCEPT_STATE: dict[str, object] = {
+    "active": False,
+    "stdout": None,
+    "stderr": None,
+}
+
+
+class _StreamToLogger:
+    """File-like wrapper that forwards writes to OpenslothLogger.
+
+    We keep minimal buffering; every write ending with a newline is flushed
+    immediately. This keeps interleaving acceptable while preserving ordering
+    via loguru's enqueue=True handlers.
+    """
+
+    def __init__(self, logger: OpenslothLogger, level: str):
+        self.logger = logger
+        self.level = level
+        self._buffer: list[str] = []
+
+    def write(self, message: str) -> int:  # type: ignore[override]
+        if not message:
+            return 0
+        # Split to retain newlines
+        for part in message.splitlines(keepends=True):
+            self._buffer.append(part)
+            if part.endswith("\n"):
+                self._flush()
+        return len(message)
+
+    def flush(self) -> None:  # type: ignore[override]
+        self._flush()
+
+    def isatty(self) -> bool:  # some libraries check this
+        return False
+
+    def _flush(self) -> None:
+        if not self._buffer:
+            return
+        combined = "".join(self._buffer).rstrip("\n")
+        self._buffer.clear()
+        if combined:
+            # Use depth=3 to point at real caller (print site)
+            self.logger._log_with_depth(self.level, combined, depth=3)
+
+
+def _patch_standard_logging(logger: OpenslothLogger) -> None:
+    """Redirect python logging + common third-party loggers into our logger."""
+    # Avoid adding multiple handlers if already configured
+    root = logging.getLogger()
+    if getattr(root, "_opensloth_patched", False):  # type: ignore[attr-defined]
+        return
+
+    class _LogHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:  # type: ignore[override]
+            try:
+                level = record.levelname.lower()
+                msg = self.format(record)
+                logger._log_with_depth(level, msg, depth=4)
+            except Exception:  # pragma: no cover - defensive
+                pass
+
+    handler = _LogHandler()
+    formatter = logging.Formatter("%(name)s | %(levelname)s | %(message)s")
+    handler.setFormatter(formatter)
+    root.handlers = [h for h in root.handlers if isinstance(h, logging.StreamHandler)] + [handler]
+    root.setLevel(logging.INFO)
+    root._opensloth_patched = True  # type: ignore[attr-defined]
+
+    # Common noisy libs -> INFO to reduce clutter
+    for name in ["transformers", "datasets", "torch", "accelerate", "unsloth"]:
+        logging.getLogger(name).setLevel(logging.INFO)
+
+
+def setup_comprehensive_logging_interception(force: bool = False) -> None:
+    """Intercept print/stdout + std logging.
+
+    Safe to call multiple times. If already active and force=False, it's a no-op.
+    """
+    if _INTERCEPT_STATE["active"] and not force:
+        return
+
+    logger = get_opensloth_logger(allow_unknown_gpu=True)
+
+    if not _INTERCEPT_STATE["active"]:
+        _INTERCEPT_STATE["stdout"] = sys.stdout
+        _INTERCEPT_STATE["stderr"] = sys.stderr
+    sys.stdout = _StreamToLogger(logger, "info")  # type: ignore[assignment]
+    sys.stderr = _StreamToLogger(logger, "error")  # type: ignore[assignment]
+    _patch_standard_logging(logger)
+    _INTERCEPT_STATE["active"] = True
+
+
+def setup_stdout_interception_for_training() -> None:
+    """Training-phase friendly alias.
+
+    Called early in worker processes before heavy imports so all subsequent
+    library prints + warnings are captured. We deliberately keep it *light*.
+    """
+    setup_comprehensive_logging_interception()
+
+
+__all__ = [
+    "OpenslothLogger",
+    "get_opensloth_logger",
+    "setup_comprehensive_logging_interception",
+    "setup_stdout_interception_for_training",
+]

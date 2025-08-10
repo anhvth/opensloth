@@ -513,19 +513,37 @@ def _init_model_and_tokenizer(
     _maybe_hot_fix_gemma(opensloth_config, logger, tokenizer)
     logger.finish_timing("model_loading")
 
-    # NCCL setup only if >1 GPU
+    # Communication backend setup only if >1 GPU
     if len(opensloth_config.devices) > 1:
-        logger.start_timing("nccl_setup")
-        from opensloth.nccl_grad_sync import get_callback_and_setup_method
-
-        setup_nccl_for_opensloth = get_callback_and_setup_method()[1]
-        setup_nccl_for_opensloth(
-            rank=int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0")),
-            gpus=opensloth_config.devices,
-        )
-        logger.finish_timing("nccl_setup")
+        backend = getattr(opensloth_config, 'comm_backend', 'allreduce')
+        if backend == 'async-ps':
+            logger.start_timing("rpc_setup")
+            try:
+                from opensloth.comm.async_ps import setup_rpc
+            except Exception as e:
+                logger.error(f"Failed to import async PS RPC setup: {e}")
+                raise
+            rank = int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0"))
+            world_size = len(opensloth_config.devices)
+            rpc_cfg = getattr(opensloth_config, 'async_ps_args', None)
+            master_addr = getattr(rpc_cfg, 'master_addr', '127.0.0.1') if rpc_cfg else '127.0.0.1'
+            master_port = getattr(rpc_cfg, 'master_port', '29512') if rpc_cfg else '29512'
+            os.environ.setdefault("MASTER_ADDR", master_addr)
+            os.environ.setdefault("MASTER_PORT", master_port)
+            setup_rpc(rank=rank, world_size=world_size, master_addr=master_addr, master_port=master_port)
+            logger.finish_timing("rpc_setup")
+            logger.info("Initialized Async Parameter Server RPC backend")
+        else:
+            logger.start_timing("nccl_setup")
+            from opensloth.nccl_grad_sync import get_callback_and_setup_method
+            setup_nccl_for_opensloth = get_callback_and_setup_method()[1]
+            setup_nccl_for_opensloth(
+                rank=int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0")),
+                gpus=opensloth_config.devices,
+            )
+            logger.finish_timing("nccl_setup")
     else:
-        logger.info("Single GPU detected; skipping NCCL setup.")
+        logger.info("Single GPU detected; skipping distributed comm setup.")
 
     logger.info(f"Model device: {model.device} | Tokenizer: {tokenizer.__class__.__name__}")
 
@@ -691,12 +709,6 @@ def _create_trainer(
         trainer._save = _no_op  # type: ignore[attr-defined]
         logger.info("Patched _save to no-op on non-master rank.")
 
-    # Always add epoch shuffle callback for visibility (safe for all trainers)
-    # ShuffleData callback removed; per-rank sharded datasets rely on standard sampler behavior.
-
-    # Add OpenSloth's custom logging callback to replace HF's default console logging
-    from opensloth.logging_config import add_opensloth_logging_callback
-    trainer = add_opensloth_logging_callback(trainer)
 
     return trainer
 

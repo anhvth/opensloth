@@ -1,5 +1,6 @@
 from multiprocessing import cpu_count
 from typing import Any, Literal, Optional
+from enum import Enum
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -151,6 +152,14 @@ class OpenSlothConfig(BaseModel):
         default=True,
         description="Disable packing of sequences for training",
     )
+    # Communication backend (allreduce | async-ps)
+    comm_backend: 'CommBackend' = Field(  # type: ignore  # forward ref until CommBackend defined later
+        default="allreduce", description="Communication backend: 'allreduce' (default) or 'async-ps'"
+    )
+    async_ps_args: Optional['AsyncPSConfig'] = Field(  # type: ignore  # forward ref
+        default=None,
+        description="Async PS configuration (active only when comm_backend='async-ps')",
+    )
     
     # Training type and related configurations
     training_type: Literal["sft", "dpo", "kto", "orpo", "grpo"] = Field(
@@ -188,16 +197,15 @@ class OpenSlothConfig(BaseModel):
     @model_validator(mode='after')
     def validate_training_type_args(self) -> "OpenSlothConfig":
         """Post-initialization validation for OpenSlothConfig."""
+        # Core field checks
         if self.data_cache_path is None:
             raise ValueError("data_cache_path must be specified")
-        if not isinstance(self.devices, list) or not all(
-            isinstance(d, int) for d in self.devices
-        ):
+        if not isinstance(self.devices, list) or not all(isinstance(d, int) for d in self.devices):
             raise ValueError("devices must be a list of integers")
         if self.lora_args is not None and not isinstance(self.lora_args, LoraArgs):
             raise ValueError("lora_args must be an instance of LoraArgs")
-        
-        # Validate training type specific configurations
+
+        # Training type specifics
         if self.training_type == "dpo":
             if self.dpo_args is None:
                 self.dpo_args = DPOArgs()
@@ -208,25 +216,56 @@ class OpenSlothConfig(BaseModel):
                 self.grpo_args = GRPOArgs()
             if self.dpo_args is not None:
                 raise ValueError("dpo_args should not be set for GRPO training")
-        else:
-            # For SFT, ensure other args are not present.
+        else:  # SFT
             if self.dpo_args is not None or self.grpo_args is not None:
                 import warnings
                 warnings.warn("For SFT training, dpo_args and grpo_args will be ignored.")
             self.dpo_args = None
             self.grpo_args = None
 
-        # Still gate not-yet-implemented types (kto, orpo) explicitly
         if self.training_type in ["kto", "orpo"]:
-            raise NotImplementedError(
-                f"Training type '{self.training_type}' is not yet implemented. Supported: sft, dpo, grpo"
-            )
-        
-        # Ensure model_name is provided
-        if self.fast_model_args and not self.fast_model_args.model_name:
-             raise ValueError("fast_model_args.model_name must be specified.")
+            raise NotImplementedError(f"Training type '{self.training_type}' is not yet implemented. Supported: sft, dpo, grpo")
 
+        if self.fast_model_args and not self.fast_model_args.model_name:
+            raise ValueError("fast_model_args.model_name must be specified.")
+
+        # Async PS default config injection
+        backend_val = getattr(self, 'comm_backend', 'allreduce')
+        if hasattr(backend_val, 'value'):
+            backend_val = backend_val.value  # unwrap Enum
+        if backend_val == 'async-ps' and self.async_ps_args is None:
+            self.async_ps_args = AsyncPSConfig()
         return self
+
+
+# ---------------- New Communication Backend Config -----------------
+
+class CommBackend(str, Enum):
+    """Supported gradient/parameter synchronization backends."""
+    ALLREDUCE = "allreduce"  # Existing NCCL all-reduce path
+    ASYNC_PS = "async-ps"     # New asynchronous parameter-server via RPC
+
+
+class AsyncPSConfig(BaseModel):
+    """Configuration for the asynchronous parameter-server backend.
+
+    Only used when comm_backend == 'async-ps'. Provides minimal tuning knobs
+    while keeping safe, conservative defaults.
+    """
+    server_lr: float = Field(5e-4, description="Learning rate applied on the server when updating parameters")
+    pull_every_n_steps: int = Field(10, description="Worker pulls fresh parameters from server every N global steps")
+    max_inflight_rpcs: int = Field(2, description="Maximum outstanding gradient push RPCs before waiting")
+    drop_local_lr: bool = Field(False, description="If True, worker optimizer lr is set to 0 so only server updates apply")
+    max_staleness: int = Field(64, description="Maximum tolerated (server_version - worker_version) before forcing pull")
+    master_addr: str = Field("127.0.0.1", description="Master address for RPC rendezvous")
+    master_port: str = Field("29512", description="Master port for RPC rendezvous (different from NCCL)")
+
+    class Config:
+        extra = "allow"
+
+
+OpenSlothConfig.model_rebuild()
+
 
 
 class TrainingArguments(BaseModel):

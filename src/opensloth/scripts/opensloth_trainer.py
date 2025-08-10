@@ -4,14 +4,16 @@ Supports various training types: SFT, DPO, KTO, ORPO, GRPO.
 Handles weight synchronization, model setup, and distributed training coordination.
 """
 
+# ruff: noqa: I001,PLR0912,PLR0915
+
 import importlib.util
 import os
 import sys
 import time
-from typing import Any, List, Dict
 import warnings
+from typing import Any
 
-from opensloth.logging_config import OpenslothLogger
+from opensloth.logging_config import OpenslothLogger, setup_stdout_interception_for_training
 from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
 
 warnings.filterwarnings("ignore")
@@ -25,63 +27,52 @@ def setup_python_env():
         return python_path
     except subprocess.CalledProcessError as e:
         from opensloth.logging_config import get_opensloth_logger
-        logger = get_opensloth_logger()
+        logger = get_opensloth_logger(allow_unknown_gpu=True)
         logger.error(f"Error getting Python path: {e}")
         return sys.executable
 
 
-def _import_unsloth(gpu: int) -> Dict[str, Any]:
-    import os
-    os.makedirs(f".cache/", exist_ok=True)
+def _import_unsloth(gpu: int) -> dict[str, Any]:
+    os.makedirs(".cache/", exist_ok=True)
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
     os.environ["UNSLOTH_COMPILE_LOCATION"] = f".cache/UNSLOTH_CACHE_DIR_{gpu}"
 
-    try:
-        unsloth_is_not_imported = "unsloth" not in ''.join(sys.modules.keys())
-        trl_is_not_imported = "trl" not in ''.join(sys.modules.keys())
-        assert unsloth_is_not_imported 
-        assert trl_is_not_imported
-        #====
-        import unsloth # unsloth must be import before trl
-        from trl import SFTConfig, SFTTrainer, GRPOConfig, GRPOTrainer
-        from opensloth.logging_config import get_opensloth_logger
-        logger = get_opensloth_logger()
-        logger.info(f"Unsloth version: {unsloth.__version__}")
-        
-        # Return a dictionary with all needed modules
-        return {
-            "unsloth": unsloth,
-            "FastLanguageModel": unsloth.FastLanguageModel,
-            "FastModel": unsloth.FastModel,
-            "SFTConfig": SFTConfig,
-            "SFTTrainer": SFTTrainer,
-            "GRPOConfig": GRPOConfig,
-            "GRPOTrainer": GRPOTrainer,
-        }
-    except AttributeError as e:
-        import warnings
-        if "Unsloth" in str(e) and "has no attribute" in str(e):
-            warnings.warn(
-                f"[OpenSloth] Unsloth RL patching error detected: {e}\n"
-                "This is likely due to a corrupted or stale compiled cache. "
-                "consider `rm -r unsloth_compiled_cache` and try again"
-            )
-        raise
+    # Enforce rule: unsloth & trl not imported globally yet
+    assert "unsloth" not in sys.modules
+    assert "trl" not in sys.modules
+
+    # Dynamic imports (order matters)
+    import unsloth  # type: ignore
+    from trl import GRPOConfig, GRPOTrainer, SFTConfig, SFTTrainer  # type: ignore
+    from opensloth.logging_config import get_opensloth_logger
+
+    logger = get_opensloth_logger(allow_unknown_gpu=True)
+    logger.info(f"Unsloth version: {unsloth.__version__}")
+
+    return {
+        "unsloth": unsloth,
+        "FastLanguageModel": unsloth.FastLanguageModel,
+        "FastModel": unsloth.FastModel,
+        "SFTConfig": SFTConfig,
+        "SFTTrainer": SFTTrainer,
+        "GRPOConfig": GRPOConfig,
+        "GRPOTrainer": GRPOTrainer,
+    }
+
+MAGIC_TWO = 2
+MAGIC_THREE = 3
+IGNORE_INDEX = -100
+
 
 def train_on_single_gpu(
     gpu: int, opensloth_config: OpenSlothConfig, hf_train_args: TrainingArguments
 ):
-    # Setup Hugging Face logging interception early - before any HF library imports
-    from opensloth.logging_config import setup_huggingface_logging_interception, setup_stdout_interception_for_training
-    setup_huggingface_logging_interception()
-    
-    # Set training active flag for stdout interception
-    os.environ["OPENSLOTH_TRAINING_ACTIVE"] = "1" 
-    setup_stdout_interception_for_training()
-    
-    # Set OPENSLOTH_LOCAL_RANK before importing unsloth to avoid logger initialization errors
+    # Set rank/env identifiers BEFORE any logging interception so logger picks them up
     os.environ["OPENSLOTH_LOCAL_RANK"] = str(opensloth_config.devices.index(gpu))
-    
+    os.environ["OPENSLOTH_WORLD_SIZE"] = str(len(opensloth_config.devices))
+    # os.environ["OPENSLOTH_TRAINING_ACTIVE"] = "1"
+    # Now install interception (logger will show proper GPU id instead of GPUUNSET)
+    # setup_stdout_interception_for_training()
     unsloth_modules = _import_unsloth(gpu)
 
     from opensloth.trainer_factory import setup_model_and_training
@@ -104,137 +95,115 @@ def train_on_single_gpu(
     )
     logger.finish_timing("model_and_training_setup")
 
-    # Register a debug hook to assert batch shape consistency early with rich logs.
-    def _register_batch_shape_assertion(_model, _logger: OpenslothLogger):
-        """
-        Asserts that input_ids, labels, and attention_mask (if present) have
-        compatible shapes before the model forward. If a mismatch is detected,
-        raises AssertionError with detailed context so issues are obvious
-        instead of failing deep inside fused CE.
-        """
+    def _register_batch_shape_assertion(_model, _logger: OpenslothLogger) -> None:
+        """Attach a forward pre-hook performing light shape assertions."""
 
         def _pre_hook(_mod, _args, _kwargs):
+            input_ids = _kwargs.get("input_ids")
+            labels = _kwargs.get("labels")
+            attention_mask = _kwargs.get("attention_mask")
+            if input_ids is None or labels is None:
+                return
             try:
-                input_ids = _kwargs.get("input_ids")
-                labels = _kwargs.get("labels")
-                attention_mask = _kwargs.get("attention_mask")
-
-                # Only validate when training with labels
-                if input_ids is None or labels is None:
-                    return
-
-                # Shapes
+                ids_shape = tuple(input_ids.size())
+                lbl_shape = tuple(labels.size())
+            except Exception:
+                return
+            msg_prefix = "[OpenSloth Debug] Batch shape check failed: "
+            if labels.dim() != input_ids.dim():
+                raise AssertionError(
+                    f"{msg_prefix}ndim mismatch -> input_ids {ids_shape} vs labels {lbl_shape}"
+                )
+            if ids_shape != lbl_shape:
+                advice = ""
+                if (
+                    len(ids_shape) == MAGIC_TWO
+                    and len(lbl_shape) == MAGIC_TWO
+                    and (
+                        lbl_shape[-1] + 1 == ids_shape[-1]
+                        or lbl_shape[-1] == ids_shape[-1] + 1
+                    )
+                ):
+                    advice = (
+                        "Possible off-by-one from shifting labels/padding. Ensure labels align to input_ids."
+                    )
                 try:
-                    ids_shape = tuple(input_ids.size())
-                    lbl_shape = tuple(labels.size())
+                    non_ignored = int((labels != IGNORE_INDEX).sum().item())
                 except Exception:
-                    # If objects don't have size (unlikely), skip
-                    return
-
-                msg_prefix = "[OpenSloth Debug] Batch shape check failed: "
-
-                # Basic dimension count check
-                if labels.dim() != input_ids.dim():
-                    raise AssertionError(
-                        f"{msg_prefix}ndim mismatch -> input_ids {ids_shape} vs labels {lbl_shape}"
-                    )
-
-                # Typical LM training expects equal (B, L). If not, raise with advice.
-                if ids_shape != lbl_shape:
-                    advice = ""
-                    if len(ids_shape) == 2 and len(lbl_shape) == 2:
-                        if lbl_shape[-1] + 1 == ids_shape[-1] or lbl_shape[-1] == ids_shape[-1] + 1:
-                            advice = "Possible off-by-one from shifting labels/padding. Ensure labels align to input_ids."
-                    # Non-ignored label count can reveal masking issues
-                    try:
-                        non_ignored = int((labels != -100).sum().item())
-                    except Exception:
-                        non_ignored = -1
-                    raise AssertionError(
-                        f"{msg_prefix}input_ids {ids_shape} != labels {lbl_shape}. {advice} "
-                        f"non_ignored_labels={non_ignored} total_labels={getattr(labels, 'numel', lambda: 'n/a')()}"
-                    )
-
-                # attention_mask, if provided, is valid when:
-                # - 2D and equals (B, L)
-                # - 3D causal mask (B, L, L)
-                if attention_mask is not None:
-                    am_shape = tuple(attention_mask.size())
-                    if len(am_shape) == 2:
-                        if am_shape != ids_shape:
-                            raise AssertionError(
-                                f"{msg_prefix}attention_mask {am_shape} != input_ids {ids_shape}"
-                            )
-                    elif len(am_shape) == 3:
-                        b, l = ids_shape
-                        if not (am_shape[0] == b and am_shape[1] == l and am_shape[2] == l):
-                            raise AssertionError(
-                                f"{msg_prefix}3D attention_mask {am_shape} expected (B, L, L) matching input_ids {ids_shape}"
-                            )
-                    else:
+                    non_ignored = -1
+                raise AssertionError(
+                    f"{msg_prefix}input_ids {ids_shape} != labels {lbl_shape}. {advice} "
+                    f"non_ignored_labels={non_ignored} total_labels={getattr(labels, 'numel', lambda: 'n/a')()}"
+                )
+            if attention_mask is not None:
+                am_shape = tuple(attention_mask.size())
+                if len(am_shape) == MAGIC_TWO:
+                    if am_shape != ids_shape:
                         raise AssertionError(
-                            f"{msg_prefix}unsupported attention_mask ndim={len(am_shape)} shape={am_shape}"
+                            f"{msg_prefix}attention_mask {am_shape} != input_ids {ids_shape}"
                         )
-
-                # Sanity: make sure we have some tokens to learn from
-                try:
-                    non_ignored = int((labels != -100).sum().item())
-                    if non_ignored == 0:
+                elif len(am_shape) == MAGIC_THREE:
+                    b, seq_len = ids_shape
+                    if not (
+                        am_shape[0] == b
+                        and am_shape[1] == seq_len
+                        and am_shape[2] == seq_len
+                    ):
                         raise AssertionError(
-                            f"{msg_prefix}all labels are -100 (ignored). Check response-only masking and packing."
+                            f"{msg_prefix}3D attention_mask {am_shape} expected (B, L, L) matching input_ids {ids_shape}"
                         )
-                except Exception:
-                    pass
-
-            except AssertionError as e:
-                gpu_env = os.environ.get("CUDA_VISIBLE_DEVICES", "?")
-                rank_env = os.environ.get("OPENSLOTH_LOCAL_RANK", "?")
-                _logger.error(f"[GPU {gpu_env} | local_rank {rank_env}] {e}")
-                # Extra stats (best-effort)
-                try:
-                    ids_dtype = getattr(locals().get("input_ids", None), "dtype", None)
-                    ids_device = getattr(locals().get("input_ids", None), "device", None)
-                    lbl_dtype = getattr(locals().get("labels", None), "dtype", None)
-                    lbl_device = getattr(locals().get("labels", None), "device", None)
-                    _logger.error(
-                        f"Input stats: ids dtype={ids_dtype} device={ids_device} | labels dtype={lbl_dtype} device={lbl_device}"
+                else:
+                    raise AssertionError(
+                        f"{msg_prefix}unsupported attention_mask ndim={len(am_shape)} shape={am_shape}"
                     )
-                except Exception:
-                    pass
-                raise
+            try:
+                non_ignored = int((labels != IGNORE_INDEX).sum().item())
+                if non_ignored == 0:
+                    raise AssertionError(
+                        f"{msg_prefix}all labels are -100 (ignored). Check response-only masking and packing."
+                    )
+            except Exception:
+                pass
 
+        reg = _model.register_forward_pre_hook
         try:
-            handle = _model.register_forward_pre_hook(_pre_hook, with_kwargs=True)  # type: ignore[arg-type]
-            setattr(_model, "_opensloth_debug_shape_hook", handle)  # keep it alive
-            _logger.info("Registered batch shape assertion hook")
+            handle = reg(_pre_hook, with_kwargs=True)  # type: ignore[arg-type]
         except TypeError:
-            # Older PyTorch may not support with_kwargs; fall back to positional
-            def _pre_hook_no_kwargs(_mod, _args):
-                return _pre_hook(_mod, _args, {})
-
-            handle = _model.register_forward_pre_hook(_pre_hook_no_kwargs)  # type: ignore[arg-type]
-            setattr(_model, "_opensloth_debug_shape_hook", handle)
-            _logger.info("Registered batch shape assertion hook (positional)")
+            handle = reg(_pre_hook)  # type: ignore[arg-type]
+        _model._opensloth_debug_shape_hook = handle  # type: ignore[attr-defined]
+        _logger.info("Registered batch shape assertion hook")
 
     _register_batch_shape_assertion(trainer.model, logger)
 
     assert trainer.model is not None, "Trainer model is None"
 
-    # Only use NCCL gradient sync for multi-GPU training
+    # Only use comm backend for multi-GPU training
     if len(opensloth_config.devices) > 1:
-        from opensloth.nccl_grad_sync import get_callback_and_setup_method
-
-        nccl_grad_sync_callback, setup_nccl_for_opensloth = get_callback_and_setup_method()
-
-        grad_sync_cb = nccl_grad_sync_callback(
-            model=trainer.model,
-            gpu=gpu,
-            gpus=opensloth_config.devices,
-        )
-        logger.info(f"Using gradient sync callback for GPU {gpu}")
-        trainer.add_callback(grad_sync_cb)
+        backend = getattr(opensloth_config, 'comm_backend', 'allreduce')
+        rank = opensloth_config.devices.index(gpu)
+        if backend == 'async-ps':
+            try:
+                from opensloth.comm.async_ps import AsyncPSCallback, initialize_server_if_rank0
+            except Exception as e:
+                logger.error(f"Failed to import AsyncPS backend: {e}")
+                raise
+            # Initialize server storage on rank 0 (after model created)
+            initialize_server_if_rank0(trainer.model, rank, opensloth_config.async_ps_args)
+            cb = AsyncPSCallback(trainer.model, rank, len(opensloth_config.devices), opensloth_config.async_ps_args)
+            trainer.add_callback(cb)
+            logger.info(f"Using Async Parameter-Server backend for GPU {gpu} (rank {rank})")
+        else:
+            from opensloth.nccl_grad_sync import get_callback_and_setup_method
+            nccl_grad_sync_callback, _ = get_callback_and_setup_method()
+            grad_sync_cb = nccl_grad_sync_callback(
+                model=trainer.model,
+                gpu=gpu,
+                gpus=opensloth_config.devices,
+            )
+            logger.info(f"Using NCCL gradient sync callback for GPU {gpu}")
+            trainer.add_callback(grad_sync_cb)
     else:
-        logger.info("Single GPU training detected, skipping NCCL gradient sync")
+        logger.info("Single GPU training detected, skipping distributed gradient sync")
 
     logger.start_timing("actual_training")
     
@@ -243,11 +212,21 @@ def train_on_single_gpu(
         logger.debug(f"Environment: {os.environ}")
     
     # Patch: Only resume from checkpoint if a valid path is provided
-    resume_from_checkpoint = getattr(hf_train_args, 'resume_from_checkpoint', None)
-    if resume_from_checkpoint and hasattr(trainer, "train") and "resume_from_checkpoint" in trainer.train.__code__.co_varnames:  # type: ignore[attr-defined]
-        trainer.train(resume_from_checkpoint=resume_from_checkpoint)  # type: ignore
-    else:
-        trainer.train()
+    try:
+        resume_from_checkpoint = getattr(hf_train_args, 'resume_from_checkpoint', None)
+        if resume_from_checkpoint and hasattr(trainer, "train") and "resume_from_checkpoint" in trainer.train.__code__.co_varnames:  # type: ignore[attr-defined]
+            trainer.train(resume_from_checkpoint=resume_from_checkpoint)  # type: ignore
+        else:
+            trainer.train()
+    finally:
+        # Ensure RPC shutdown for async-ps backend
+        if len(opensloth_config.devices) > 1 and getattr(opensloth_config, 'comm_backend', 'allreduce') == 'async-ps':
+            try:
+                from opensloth.comm.async_ps import shutdown_rpc
+                logger.info("Shutting down AsyncPS RPC backend ...")
+                shutdown_rpc()
+            except Exception as e:
+                logger.warning(f"RPC shutdown encountered an issue: {e}")
     logger.finish_timing("actual_training")
 
     # Save once from rank=0
@@ -349,7 +328,6 @@ tmux new-session -d -s {session_name} -n MAIN"""
             print(f"Auto-killing existing session {session_name}")
             os.system(f"tmux kill-session -t {session_name}")
         else:
-            (f"Session {session_name} exists, please kill it before running the script")
             # ask user if they want to kill the session
             user_input = input(
                 f"Session {session_name} exists, do you want to kill it? (y/n): "
@@ -366,7 +344,6 @@ tmux new-session -d -s {session_name} -n MAIN"""
 def run_tmux_training(
     session_name: str,
     config_file: str,
-    training_config: TrainingArguments,
     gpus: list,
     auto_kill: bool = False,
 ):

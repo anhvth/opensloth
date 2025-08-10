@@ -96,6 +96,7 @@ ignore = [
     "F405",  # name may be undefined, or defined from star imports
     "PLC0415",  # import should be at the top-level of a file (deliberate in this project)
     "PLR0913", # Too many arguments (function has 4 positional arguments, but 3 are allowed)
+    "F401",
 ]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "TID", "ARG", "PL", "RUF"]
 
