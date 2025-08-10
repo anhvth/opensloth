@@ -158,7 +158,7 @@ def run_prepare_data(config: DatasetPrepConfig) -> str:
         preparer = module.GRPODatasetPreparer()
     else:
         from opensloth.dataset import GemmaDatasetPreparer, QwenDatasetPreparer  # type: ignore
-        model_name = config_dict.get("tok_name", "").lower()
+        model_name = config_dict.get("tokenizer_name", "").lower()
         preparer = GemmaDatasetPreparer() if "gemma" in model_name else QwenDatasetPreparer()
     
     output_dir = preparer.run_with_config(config_dict)

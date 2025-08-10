@@ -43,7 +43,7 @@ class QwenDatasetPreparer(BaseDatasetPreparer):
     def post_process_text(self, text: str) -> str:
         """Post-process text for Qwen models."""
         # Remove thinking tokens for instruct models
-        if 'instruct-2507' in self.args.tok_name.lower():
+        if 'instruct-2507' in self.args.tokenizer_name.lower():
             text = text.replace('<think>\n\n</think>\n\n', '')
         return text
 

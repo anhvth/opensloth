@@ -6,14 +6,10 @@ This command orchestrates both data preparation and training in a single step,
 ensuring consistency across both phases.
 """
 import json
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import typer
-from opensloth.dataset.config_schema import DatasetPrepConfig
-from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
-
-from .autogen import cli_from_pydantic
 
 app = typer.Typer(
     name="os-train",
@@ -25,8 +21,6 @@ def run_workflow(method: str, cli_overrides: dict, **static_kwargs):
     """Orchestrates the data prep and training workflow."""
     
     # Lazy imports to avoid slow startup
-    from datetime import datetime
-
     from opensloth.api import run_prepare_data, run_training
     from opensloth.config.builder import TrainingConfigBuilder
     from opensloth.dataset.config_schema import DatasetPrepConfig
@@ -44,8 +38,8 @@ def run_workflow(method: str, cli_overrides: dict, **static_kwargs):
             shared_args['max_seq_length'] = fast_model_args['max_seq_length']
     
     # Override with explicit dataset prep values if provided
-    if 'tok_name' in dataset_prep_config:
-        shared_args['model'] = dataset_prep_config['tok_name']
+    if 'tokenizer_name' in dataset_prep_config:
+        shared_args['model'] = dataset_prep_config['tokenizer_name']
     if 'max_seq_length' in dataset_prep_config:
         shared_args['max_seq_length'] = dataset_prep_config['max_seq_length']
     
@@ -62,7 +56,7 @@ def run_workflow(method: str, cli_overrides: dict, **static_kwargs):
         main_output_dir = Path(static_kwargs['output'])
     else:
         # Auto-generate a unique experiment directory name
-        model_name_safe = prep_kwargs['model'].split("/")[-1] if 'model' in prep_kwargs else 'unknown'
+        model_name_safe = prep_kwargs['tokenizer_name'].split("/")[-1] if 'tokenizer_name' in prep_kwargs else 'unknown'
         dataset_name_safe = Path(prep_kwargs['dataset_name']).stem if Path(prep_kwargs['dataset_name']).suffix else prep_kwargs['dataset_name'].replace('/', '_')
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         main_output_dir = Path(f"outputs/{method}_{model_name_safe}_{dataset_name_safe}_{timestamp}")
@@ -110,40 +104,148 @@ def run_workflow(method: str, cli_overrides: dict, **static_kwargs):
     run_training(opensloth_cfg, train_args, use_tmux=use_tmux)
     typer.secho(f"🎉🎉🎉 Workflow complete! Final model saved to: {train_args.output_dir}", fg="magenta")
 
-# Create simplified commands that leverage dynamic CLI generation
+def _generate_output_dir(model_name: str, input_name: str, method: str) -> str:
+    """Generate an automatic output directory name."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_short = model_name.split("/")[-1].replace("-", "_").lower()
+    input_short = Path(input_name).name.replace("-", "_").lower()
+    return f"outputs/{method}_{model_short}_{input_short}_{timestamp}"
 
+# SFT Command with autogen
 @app.command("sft")
-@cli_from_pydantic(DatasetPrepConfig, OpenSlothConfig, TrainingArguments)
-def sft(
+def sft_command(
     input: str = typer.Argument(..., help="Path to an input .jsonl file OR a HuggingFace dataset name."),
     output: str | None = typer.Option(None, "--output", "-o", help="Output directory for training results."),
-    tmux: bool = typer.Option(False, "--tmux", help="Use tmux for multi-GPU training."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print configuration and exit without running.", rich_help_panel="System Options"),
+    use_tmux: bool = typer.Option(False, "--tmux", help="Use tmux for multi-GPU training.", rich_help_panel="System Options"),
     cli_overrides: dict | None = None,
 ):
-    """Prepare data and run SFT in a single command."""
-    run_workflow("sft", cli_overrides or {}, input=input, output=output, tmux=tmux)
+    """
+    Prepare data and run SFT training in a single command.
+    All configuration options are dynamically generated from the Pydantic models.
+    """
+    # Set defaults for missing model_name if needed
+    if not cli_overrides:
+        cli_overrides = {}
+    
+    # Extract model name for output directory generation
+    model_name = "unknown"
+    if 'dataset_prep_config' in cli_overrides and 'tokenizer_name' in cli_overrides['dataset_prep_config']:
+        model_name = cli_overrides['dataset_prep_config']['tokenizer_name']
+    elif 'opensloth_config' in cli_overrides and 'fast_model_args' in cli_overrides['opensloth_config']:
+        if 'model_name' in cli_overrides['opensloth_config']['fast_model_args']:
+            model_name = cli_overrides['opensloth_config']['fast_model_args']['model_name']
+    
+    if not output:
+        output = _generate_output_dir(model_name, input, "sft")
 
-@app.command("dpo")
-@cli_from_pydantic(DatasetPrepConfig, OpenSlothConfig, TrainingArguments)
-def dpo(
+    if dry_run:
+        typer.echo("DRY RUN: SFT training configuration:")
+        summary = {
+            "input": input,
+            "output": output,
+            "cli_overrides": cli_overrides,
+        }
+        typer.echo(json.dumps(summary, indent=2))
+        return
+
+    run_workflow("sft", cli_overrides, input=input, output=output, tmux=use_tmux)
+
+# DPO Command with autogen
+@app.command("dpo")  
+def dpo_command(
     input: str = typer.Argument(..., help="Path to an input .jsonl file OR a HuggingFace dataset name."),
     output: str | None = typer.Option(None, "--output", "-o", help="Output directory for training results."),
-    tmux: bool = typer.Option(False, "--tmux", help="Use tmux for multi-GPU training."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print configuration and exit without running.", rich_help_panel="System Options"),
+    use_tmux: bool = typer.Option(False, "--tmux", help="Use tmux for multi-GPU training.", rich_help_panel="System Options"),
     cli_overrides: dict | None = None,
 ):
-    """Prepare data and run DPO in a single command."""
-    run_workflow("dpo", cli_overrides or {}, input=input, output=output, tmux=tmux)
+    """
+    Prepare data and run DPO training in a single command.
+    All configuration options are dynamically generated from the Pydantic models.
+    """
+    # Set defaults for missing model_name if needed
+    if not cli_overrides:
+        cli_overrides = {}
+    
+    # Extract model name for output directory generation
+    model_name = "unknown"
+    if 'dataset_prep_config' in cli_overrides and 'tokenizer_name' in cli_overrides['dataset_prep_config']:
+        model_name = cli_overrides['dataset_prep_config']['tokenizer_name']
+    elif 'opensloth_config' in cli_overrides and 'fast_model_args' in cli_overrides['opensloth_config']:
+        if 'model_name' in cli_overrides['opensloth_config']['fast_model_args']:
+            model_name = cli_overrides['opensloth_config']['fast_model_args']['model_name']
+    
+    if not output:
+        output = _generate_output_dir(model_name, input, "dpo")
 
+    if dry_run:
+        typer.echo("DRY RUN: DPO training configuration:")
+        summary = {
+            "input": input,
+            "output": output,
+            "cli_overrides": cli_overrides,
+        }
+        typer.echo(json.dumps(summary, indent=2))
+        return
+
+    run_workflow("dpo", cli_overrides, input=input, output=output, tmux=use_tmux)
+
+# GRPO Command with autogen
 @app.command("grpo")
-@cli_from_pydantic(DatasetPrepConfig, OpenSlothConfig, TrainingArguments)
-def grpo(
+def grpo_command(
     input: str = typer.Argument(..., help="Path to an input .jsonl file OR a HuggingFace dataset name."),
     output: str | None = typer.Option(None, "--output", "-o", help="Output directory for training results."),
-    tmux: bool = typer.Option(False, "--tmux", help="Use tmux for multi-GPU training."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print configuration and exit without running.", rich_help_panel="System Options"),
+    use_tmux: bool = typer.Option(False, "--tmux", help="Use tmux for multi-GPU training.", rich_help_panel="System Options"),
     cli_overrides: dict | None = None,
 ):
-    """Prepare data and run GRPO in a single command."""
-    run_workflow("grpo", cli_overrides or {}, input=input, output=output, tmux=tmux)
+    """
+    Prepare data and run GRPO training in a single command.
+    All configuration options are dynamically generated from the Pydantic models.
+    """
+    # Set defaults for missing model_name if needed
+    if not cli_overrides:
+        cli_overrides = {}
+    
+    # Extract model name for output directory generation
+    model_name = "unknown"
+    if 'dataset_prep_config' in cli_overrides and 'tokenizer_name' in cli_overrides['dataset_prep_config']:
+        model_name = cli_overrides['dataset_prep_config']['tokenizer_name']
+    elif 'opensloth_config' in cli_overrides and 'fast_model_args' in cli_overrides['opensloth_config']:
+        if 'model_name' in cli_overrides['opensloth_config']['fast_model_args']:
+            model_name = cli_overrides['opensloth_config']['fast_model_args']['model_name']
+    
+    if not output:
+        output = _generate_output_dir(model_name, input, "grpo")
+
+    if dry_run:
+        typer.echo("DRY RUN: GRPO training configuration:")
+        summary = {
+            "input": input,
+            "output": output,
+            "cli_overrides": cli_overrides,
+        }
+        typer.echo(json.dumps(summary, indent=2))
+        return
+
+    run_workflow("grpo", cli_overrides, input=input, output=output, tmux=use_tmux)
+
+# Apply autogen decorators when module is imported
+def _apply_autogen():
+    """Apply autogen decorators to all commands."""
+    # Lazy import
+    from opensloth.cli.autogen import cli_from_pydantic
+    from opensloth.dataset.config_schema import DatasetPrepConfig
+    from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
+    
+    global sft_command, dpo_command, grpo_command
+    sft_command = cli_from_pydantic(DatasetPrepConfig, OpenSlothConfig, TrainingArguments)(sft_command)
+    dpo_command = cli_from_pydantic(DatasetPrepConfig, OpenSlothConfig, TrainingArguments)(dpo_command)
+    grpo_command = cli_from_pydantic(DatasetPrepConfig, OpenSlothConfig, TrainingArguments)(grpo_command)
+
+# Comment out for now to test if this is causing the issue
+# _apply_autogen()
 
 def main():
     """Entry point for the CLI."""

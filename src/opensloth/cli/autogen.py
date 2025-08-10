@@ -54,9 +54,13 @@ def _process_model_fields(
                 continue
             seen_keys.add(param_key)
             
+            # --- Check if field should be hidden from CLI ---
+            alias_info = field.json_schema_extra or {}
+            if alias_info.get('hidden', False):
+                continue  # Skip hidden fields
+            
             # --- Generate CLI Flags ---
             cli_flags = []
-            alias_info = field.json_schema_extra or {}
             
             # 1. Short, user-friendly alias (e.g., --model)
             if 'cli_alias' in alias_info:
@@ -168,8 +172,13 @@ def reconstruct_config_from_kwargs(kwargs: dict[str, Any], params_info: list[dic
             for key in path:
                 current_level = current_level.setdefault(key, {})
             
-            # Set the final value
-            field_name = param_key.split("_")[-1]
+            # Set the final value - use the original field name from path + param_key
+            if p_info["path"]:
+                # For nested fields, use the last component of the path
+                field_name = p_info["path"][-1] if p_info["path"] else param_key.split("_")[-1]
+            else:
+                # For top-level fields, use the full param_key as the field name
+                field_name = param_key
             current_level[field_name] = kwargs[param_key]
             
     return config

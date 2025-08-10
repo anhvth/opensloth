@@ -245,7 +245,7 @@ class GRPODatasetPreparer(BaseDatasetPreparer):
         return {
             "model_family": "GRPO",
             "training_type": "grpo",
-            "tokenizer": self.args.tok_name,
+            "tokenizer": self.args.tokenizer_name,
             "chat_template": self.args.chat_template,
             "max_seq_length": self.args.max_seq_length,
             "dataset_name": self.args.dataset_name,

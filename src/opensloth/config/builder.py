@@ -63,8 +63,8 @@ class TrainingConfigBuilder:
         inferred_config: dict[str, Any] = {"opensloth_config": {}}
         
         # Infer model name and max sequence length from the dataset if available
-        if dataset_cfg.get("tok_name"):
-            inferred_config["opensloth_config"]["fast_model_args"] = {"model_name": dataset_cfg["tok_name"]}
+        if dataset_cfg.get("tokenizer_name"):
+            inferred_config["opensloth_config"]["fast_model_args"] = {"model_name": dataset_cfg["tokenizer_name"]}
         if dataset_cfg.get("max_seq_length"):
             inferred_config["opensloth_config"].setdefault("fast_model_args", {})["max_seq_length"] = dataset_cfg["max_seq_length"]
         

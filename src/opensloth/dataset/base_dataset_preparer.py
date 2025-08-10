@@ -15,9 +15,6 @@ from types import SimpleNamespace
 from typing import Any, Dict, Optional, Union
 
 import datasets
-from speedy_utils import *
-from torch.utils.data import DataLoader
-from transformers import AutoTokenizer
 
 from .config_printer import DatasetPreparationConfigPrinter
 from .utils import train_on_target_text_only
@@ -49,7 +46,7 @@ class BaseDatasetPreparer(ABC):
 
         # Model/tokenizer args
         parser.add_argument(
-            '--tok_name', type=str, default=self.get_default_tokenizer(),
+            '--tokenizer_name', type=str, default=self.get_default_tokenizer(),
             help='Path to the tokenizer/model directory'
         )
         parser.add_argument(
@@ -157,7 +154,7 @@ class BaseDatasetPreparer(ABC):
         if self.args.output_dir:
             return self.args.output_dir
             
-        model_name = self.sanitize_name(self.args.tok_name)
+        model_name = self.sanitize_name(self.args.tokenizer_name)
         dataset_name = self.sanitize_name(self.args.dataset_name)
         split = self.sanitize_name(self.args.split)
         
@@ -176,7 +173,7 @@ class BaseDatasetPreparer(ABC):
     def setup_configuration(self):
         """Setup and print configuration."""
         self.config_dict = {
-            "Tokenizer/model": self.args.tok_name,
+            "Tokenizer/model": self.args.tokenizer_name,
             "Dataset": f"{self.args.dataset_name} [split: {self.args.split}]",
             "Chat template": self.args.chat_template,
             "Max sequence length": self.args.max_seq_length,
@@ -209,7 +206,8 @@ class BaseDatasetPreparer(ABC):
     def setup_tokenizer(self):
         """Load and setup tokenizer with chat template."""
         print("[INFO] Loading tokenizer...")
-        self.tokenizer = AutoTokenizer.from_pretrained(self.args.tok_name)
+        from transformers import AutoTokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(self.args.tokenizer_name)
         print("[INFO] Patching tokenizer for chat template...")
         # Import get_chat_template lazily to avoid slow unsloth initialization
         from unsloth.chat_templates import get_chat_template
@@ -368,6 +366,7 @@ class BaseDatasetPreparer(ABC):
         return filtered_data
     
     def debug_visualization(self, data: datasets.Dataset):
+        from torch.utils.data import DataLoader
         """Create debug visualization if debug mode is enabled."""
         if self.args.debug > 0:
             print(f"[INFO] Debug mode enabled. Dumping {self.args.debug} samples to HTML and terminal...")
@@ -438,7 +437,7 @@ class BaseDatasetPreparer(ABC):
         the current configuration.
         """
         return {
-            "tok_name": self.args.tok_name,
+            "tokenizer_name": self.args.tokenizer_name,
             "chat_template": self.args.chat_template,
             "dataset_name": self.args.dataset_name,
             "split": self.args.split,
