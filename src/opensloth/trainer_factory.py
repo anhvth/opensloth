@@ -625,22 +625,20 @@ def _create_trainer(
     logger.finish_timing("universal_patch")
 
     # Apply UNIVERSAL multi-GPU log patch for all trainer types
-    if len(opensloth_config.devices) > 1:
-        # Check if we should apply the IPC log patch
-        use_tmux = os.environ.get("USE_TMUX") == "1"
-        
-        if not use_tmux:
-            # Only apply IPC log patch in multiprocessing mode
-            logger.start_timing("multi_gpu_log_patch")
-            from opensloth.patching.patch_log_for_multi_gpu import patch_log_for_multi_gpu
-
-            patch_log_for_multi_gpu(trainer)
-            logger.info("Applied IPC log aggregation patch for multiprocessing mode.")
-            logger.finish_timing("multi_gpu_log_patch")
-        else:
-            logger.info("Skipping IPC log patch for tmux mode (each process has its own terminal).")
-    else:
-        logger.info("Single GPU detected; skipping multi-GPU log patch.")
+    # if len(opensloth_config.devices) > 1:
+    #     # Check if we should apply the IPC log patch
+        # use_tmux = os.environ.get("USE_TMUX") == "1"
+        # if not use_tmux:
+        #     # Only apply IPC log patch in multiprocessing mode
+        #     logger.start_timing("multi_gpu_log_patch")
+        #     from opensloth.patching.patch_log_for_multi_gpu import patch_log_for_multi_gpu
+        #     patch_log_for_multi_gpu(trainer)
+        #     logger.info("Applied IPC log aggregation patch for multiprocessing mode.")
+        #     logger.finish_timing("multi_gpu_log_patch")
+        # else:
+        #     logger.info("Skipping IPC log patch for tmux mode (each process has its own terminal).")
+    # else:
+        # logger.info("Single GPU detected; skipping multi-GPU log patch.")
 
     # Apply SFT-specific patches (inner loop, etc.)
     if opensloth_config.training_type == "sft":

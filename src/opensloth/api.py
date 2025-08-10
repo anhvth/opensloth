@@ -95,6 +95,7 @@ def run_training(
 ) -> Tuple[OpenSlothConfig, TrainingArguments]:
     setup_envs(opensloth_config, training_args)
     multi_gpu = len(opensloth_config.devices) > 1
+
     if use_tmux and not multi_gpu:
         use_tmux = False
     if use_tmux and multi_gpu:

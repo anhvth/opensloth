@@ -214,24 +214,32 @@ class TrainingConfigBuilder:
         
         # Set mandatory paths and computed values
         defaults["opensloth_config"]["data_cache_path"] = self.dataset_path
-        gpus = 1
-        for key in ("gpus", "num_shards", "num_gpus"):
-            if key in self._dataset_cfg:
-                try:
-                    gpus = int(self._dataset_cfg[key])
-                    break
-                except Exception:
-                    pass
-        defaults["opensloth_config"]["devices"] = list(range(gpus))
-        # Clamp to actual available CUDA device count to prevent oversubscription
-        try:
-            import torch
-            if torch.cuda.is_available():
-                available = torch.cuda.device_count()
-                if available > 0 and len(defaults["opensloth_config"]["devices"]) > available:
-                    defaults["opensloth_config"]["devices"] = list(range(available))
-        except Exception:
-            pass
+        
+        # Only set devices from dataset config if not explicitly provided via CLI
+        devices_from_cli = False
+        if self._cli_overrides:
+            if "opensloth_config" in self._cli_overrides and "devices" in self._cli_overrides["opensloth_config"]:
+                devices_from_cli = True
+        
+        if not devices_from_cli:
+            gpus = 1
+            for key in ("gpus", "num_shards", "num_gpus"):
+                if key in self._dataset_cfg:
+                    try:
+                        gpus = int(self._dataset_cfg[key])
+                        break
+                    except Exception:
+                        pass
+            defaults["opensloth_config"]["devices"] = list(range(gpus))
+            # Clamp to actual available CUDA device count to prevent oversubscription
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    available = torch.cuda.device_count()
+                    if available > 0 and len(defaults["opensloth_config"]["devices"]) > available:
+                        defaults["opensloth_config"]["devices"] = list(range(available))
+            except Exception:
+                pass
         
         # Set sequence_packing default based on training method
         if self.method == "sft":

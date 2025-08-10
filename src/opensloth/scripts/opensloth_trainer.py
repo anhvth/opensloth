@@ -314,9 +314,10 @@ tmux new-session -d -s {session_name} -n MAIN"""
 
 
     for local_rank, gpu_index in enumerate(gpus):
+        # Use the os-tmux-worker entry point for cleaner command generation
         cmd = (
             f"USE_TMUX=1 "
-            f"{get_current_python_path()} {sys.argv[0]} "
+            f"os-tmux-worker "
             f"{config_file} "
             f"--rank {local_rank} "
             f"--world_size {len(gpus)}"

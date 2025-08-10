@@ -49,25 +49,24 @@ RUN_NAME="grpo_tutorial_${TIMESTAMP}"
 echo "🔄 Running os-grpo training..."
 echo "🔗 Using SFT model as starting point for preference optimization"
 rm -rf outputs/grpo_final_model
-os-grpo 
-    data/grpo_dapo_prepared 
-    --model "outputs/sft_qwen_reasoning_model" 
-    --output outputs/grpo_final_model 
-    --task math 
-    --epochs 2 
-    --batch-size 1 
-    --grad-accum 8 
-    --lr 5e-5 
-    --lora-r 16 
-    --lora-alpha 32 
-    --beta 0.1 
-    --group-size 4 
-    --max-new 2048 
-    --max-prompt-len 1024 
-    --max-seq-length 4096 
-    --temperature 1.0 
-    --top-p 0.9 
-    --logging-steps 10 
+os-grpo data/grpo_dapo_prepared \
+    --model "outputs/sft_qwen_reasoning_model" \
+    --output outputs/grpo_final_model \
+    --task math \
+    --epochs 10 \
+    --batch-size 128 \
+    --grad-accum 1 \
+    --lr 5e-5 \
+    --lora-r 16 \
+    --lora-alpha 32 \
+    --beta 0.1 \
+    --group-size 8 \
+    --max-new 2048 \
+    --max-prompt-len 1024 \
+    --max-seq-length 4096 \
+    --temperature 1.0 \
+    --top-p 0.9 \
+    --logging-steps 10 \
     --save-total-limit 2
 
 # Verify the training completed successfully

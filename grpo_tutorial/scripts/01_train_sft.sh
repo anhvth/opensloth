@@ -43,10 +43,10 @@ os-sft \
     data/sft_openmath_prepared \
     --model "Qwen/Qwen2.5-3B-Instruct" \
     --output outputs/sft_qwen_reasoning_model \
-    --epochs 3 \
-    --batch-size 2 \
-    --grad-accum 4 \
-    --lr 2e-4 \
+    --num-train-epochs 3 \
+    --per-device-train-batch-size 2 \
+    --gradient-accumulation-steps 4 \
+    --learning-rate 2e-4 \
     --lora-r 16 \
     --lora-alpha 32
 

@@ -60,7 +60,7 @@ if [ "$REPROCESS" = "1" ]; then
         open-r1/DAPO-Math-17k-Processed \
         --method grpo \
         --output data/grpo_dapo_prepared \
-        --max-seq-length 2048 \
+        --max-seq-length 4096 \
         --gpus $GPU_COUNT \
         --workers 4 \
         --samples ${GRPO_SAMPLES} || { echo "❌ os-data failed"; exit 1; }

@@ -56,6 +56,8 @@ os-data = "opensloth.cli.os_data:main"
 os-sft = "opensloth.cli.os_sft:main"
 os-dpo = "opensloth.cli.os_dpo:main"
 os-grpo = "opensloth.cli.os_grpo:main"
+# TMux worker script for multi-GPU training
+os-tmux-worker = "opensloth.scripts.tmux_train_worker:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

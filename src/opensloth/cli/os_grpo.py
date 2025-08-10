@@ -254,8 +254,8 @@ def main(
             pass
 
     summary = {
-        "opensloth_config": opensloth_cfg.model_dump(exclude_unset=True),
-        "training_args": train_args.model_dump(exclude_unset=True),
+        "opensloth_config": opensloth_cfg.model_dump(),
+        "training_args": train_args.model_dump(),
     }
 
     # Early validation for GRPO-specific requirements (show even in dry-run)
