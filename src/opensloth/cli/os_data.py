@@ -10,7 +10,7 @@ import typer
 
 from opensloth.api import run_prepare_data
 from opensloth.cli.autogen import cli_from_pydantic
-from opensloth.dataset.config_schema import DatasetPrepConfig
+from opensloth.opensloth_config import DatasetPrepConfig
 
 app = typer.Typer(
     name="os-data",
@@ -31,13 +31,13 @@ def main(
         help="Preparation method (sft, dpo, grpo). Affects required data format.",
     ),
     output: Path = typer.Option(
-        ..., "--output", "-o", help="Output directory for the processed dataset."
+        None, "--output", "-o", help="Output directory for the processed dataset."
     ),
     force: bool = typer.Option(
-        ..., "--force", "-f", help="Force overwrite of existing output directory."
+        False, "--force", "-f", help="Force overwrite of existing output directory."
     ),
     dry_run: bool = typer.Option(
-        ..., "--dry-run", help="Print the configuration and exit without running."
+        False, "--dry-run", help="Print the configuration and exit without running."
     ),
     cli_overrides: dict | None = None,
 ):

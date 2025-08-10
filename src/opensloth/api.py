@@ -1,4 +1,5 @@
 """Public programmatic API for OpenSloth."""
+
 from __future__ import annotations
 
 import json
@@ -11,17 +12,21 @@ import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING, Tuple
 
-from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
+from opensloth.opensloth_config import (
+    DatasetPrepConfig,
+    OpenSlothConfig,
+    TrainingArguments,
+)
 from opensloth.scripts.opensloth_trainer import (
     run_mp_training,
     run_tmux_training,
     setup_envs,
 )
 
-if TYPE_CHECKING:
-    from opensloth.dataset.config_schema import DatasetPrepConfig
 
-def _serialise_configs_to_temp(opensloth_config: OpenSlothConfig, training_args: TrainingArguments) -> Path:
+def _serialise_configs_to_temp(
+    opensloth_config: OpenSlothConfig, training_args: TrainingArguments
+) -> Path:
     tmp_dir = Path(tempfile.mkdtemp(prefix="opensloth_cli_"))
     cfg_path = tmp_dir / "_tmux_config.py"
     code = textwrap.dedent(
@@ -37,12 +42,12 @@ training_config = TrainingArguments(**json.loads(_training_args_json))
     cfg_path.write_text(code)
     return cfg_path
 
+
 def _generate_training_script(
-    opensloth_config: OpenSlothConfig, 
-    training_args: TrainingArguments
+    opensloth_config: OpenSlothConfig, training_args: TrainingArguments
 ) -> str:
     """Generates a standalone Python script from config objects."""
-    
+
     # Convert Pydantic models to dictionaries
     opensloth_config_dict = opensloth_config.model_dump()
     training_args_dict = training_args.model_dump()
@@ -88,6 +93,7 @@ if __name__ == "__main__":
 """
     return script_template
 
+
 def run_training(
     opensloth_config: OpenSlothConfig,
     training_args: TrainingArguments,
@@ -125,50 +131,51 @@ def run_training(
     print("🚀 Executing generated script...")
     # Use sys.executable to ensure the same Python env is used
     process = subprocess.run([sys.executable, str(script_path)], check=True)
-    
+
     if process.returncode == 0:
         print("✅ Training process completed successfully.")
     else:
         print(f"❌ Training process failed with exit code {process.returncode}.")
     return opensloth_config, training_args
 
+
 def run_prepare_data(config: DatasetPrepConfig) -> str:
     """Runs the appropriate dataset preparer based on the config."""
-    from opensloth.dataset.config_schema import DatasetPrepConfig
-    
+    from opensloth.opensloth_config import DatasetPrepConfig
+
     # Convert Pydantic model to dict for backwards compatibility
     if isinstance(config, DatasetPrepConfig):
         config_dict = config.model_dump()
     else:
         # Backwards compatibility - assume it's already a dict
         config_dict = config
-    
+
     method = config_dict.get("training_type", "sft")
     if method == "grpo":
-        import importlib.util
-        import pathlib
-        # prepare_grpo.py lives at repository_root/prepare_dataset/prepare_grpo.py (not inside src/opensloth)
-        repo_root = pathlib.Path(__file__).resolve().parents[2]
-        prep_path = repo_root / "prepare_dataset" / "prepare_grpo.py"
-        spec = importlib.util.spec_from_file_location("_grpo_prep", prep_path)
-        if spec is None or spec.loader is None:
-            raise RuntimeError("Could not locate prepare_grpo.py")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)  # type: ignore
-        preparer = module.GRPODatasetPreparer()
+        from opensloth.dataset.prepare_grpo import GRPODatasetPreparer
+        preparer = GRPODatasetPreparer()
     else:
-        from opensloth.dataset import GemmaDatasetPreparer, QwenDatasetPreparer  # type: ignore
+        from opensloth.dataset import GemmaDatasetPreparer, QwenDatasetPreparer
+
         model_name = config_dict.get("tokenizer_name", "").lower()
-        preparer = GemmaDatasetPreparer() if "gemma" in model_name else QwenDatasetPreparer()
-    
+        if "gemma" in model_name:
+            preparer = GemmaDatasetPreparer()
+        elif 'qwen' in model_name:
+            preparer = QwenDatasetPreparer()
+        else:
+            raise NotImplementedError("Unsupported tokenizer type")
+
     output_dir = preparer.run_with_config(config_dict)
     return output_dir
 
+
 __all__ = ["run_prepare_data", "run_training"]
+
 
 # Export DatasetPrepConfig for convenience
 def __getattr__(name):
     if name == "DatasetPrepConfig":
-        from opensloth.dataset.config_schema import DatasetPrepConfig
+        from opensloth.opensloth_config import DatasetPrepConfig
+
         return DatasetPrepConfig
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

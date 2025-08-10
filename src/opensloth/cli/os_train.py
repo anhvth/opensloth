@@ -23,7 +23,7 @@ def run_workflow(method: str, cli_overrides: dict, **static_kwargs):
     # Lazy imports to avoid slow startup
     from opensloth.api import run_prepare_data, run_training
     from opensloth.config.builder import TrainingConfigBuilder
-    from opensloth.dataset.config_schema import DatasetPrepConfig
+    from opensloth.opensloth_config import DatasetPrepConfig
     
     # Extract DatasetPrepConfig arguments from cli_overrides
     dataset_prep_config = cli_overrides.get('dataset_prep_config', {})
@@ -236,7 +236,7 @@ def _apply_autogen():
     """Apply autogen decorators to all commands."""
     # Lazy import
     from opensloth.cli.autogen import cli_from_pydantic
-    from opensloth.dataset.config_schema import DatasetPrepConfig
+    from opensloth.opensloth_config import DatasetPrepConfig
     from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
     
     global sft_command, dpo_command, grpo_command
