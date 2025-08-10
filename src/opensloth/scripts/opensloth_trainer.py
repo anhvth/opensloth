@@ -17,20 +17,17 @@ from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
 warnings.filterwarnings("ignore")
 
 
-def get_current_python_path():
-    """
-    Return output of which python
-    """
+def setup_python_env():
     import subprocess
-
+    import sys
     try:
-        result = subprocess.run(
-            ["which", "python"], capture_output=True, text=True, check=True
-        )
-        return result.stdout.strip()
+        python_path = subprocess.check_output([sys.executable, "-c", "import sys; print(sys.executable)"], text=True).strip()
+        return python_path
     except subprocess.CalledProcessError as e:
-        print(f"Error getting Python path: {e}")
-        return None
+        from opensloth.logging_config import get_opensloth_logger
+        logger = get_opensloth_logger()
+        logger.error(f"Error getting Python path: {e}")
+        return sys.executable
 
 
 def _import_unsloth(gpu: int) -> Dict[str, Any]:
@@ -47,7 +44,9 @@ def _import_unsloth(gpu: int) -> Dict[str, Any]:
         #====
         import unsloth # unsloth must be import before trl
         from trl import SFTConfig, SFTTrainer, GRPOConfig, GRPOTrainer
-        print("Unsloth version:", unsloth.__version__)
+        from opensloth.logging_config import get_opensloth_logger
+        logger = get_opensloth_logger()
+        logger.info(f"Unsloth version: {unsloth.__version__}")
         
         # Return a dictionary with all needed modules
         return {
@@ -72,12 +71,21 @@ def _import_unsloth(gpu: int) -> Dict[str, Any]:
 def train_on_single_gpu(
     gpu: int, opensloth_config: OpenSlothConfig, hf_train_args: TrainingArguments
 ):
+    # Setup Hugging Face logging interception early - before any HF library imports
+    from opensloth.logging_config import setup_huggingface_logging_interception, setup_stdout_interception_for_training
+    setup_huggingface_logging_interception()
+    
+    # Set training active flag for stdout interception
+    os.environ["OPENSLOTH_TRAINING_ACTIVE"] = "1" 
+    setup_stdout_interception_for_training()
+    
+    # Set OPENSLOTH_LOCAL_RANK before importing unsloth to avoid logger initialization errors
+    os.environ["OPENSLOTH_LOCAL_RANK"] = str(opensloth_config.devices.index(gpu))
     
     unsloth_modules = _import_unsloth(gpu)
 
     from opensloth.trainer_factory import setup_model_and_training
 
-    os.environ["OPENSLOTH_LOCAL_RANK"] = str(opensloth_config.devices.index(gpu))
     # Setup enhanced logger
     logger = OpenslothLogger()
 

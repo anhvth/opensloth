@@ -74,7 +74,7 @@ def _build_cli_overrides(
     }
     
     lora_args = {k: v for k, v in {"r": lora_r, "lora_alpha": lora_alpha, "lora_dropout": lora_dropout}.items() if v is not None}
-    if lora_targets:
+    if lora_targets and isinstance(lora_targets, str):
         targets = [t.strip() for t in lora_targets.split(",") if t.strip()]
         if targets:
             lora_args["target_modules"] = targets
@@ -101,10 +101,10 @@ def _build_cli_overrides(
             grpo_args[k] = v
     if no_custom_chat_template:
         grpo_args["use_custom_chat_template"] = False
-    if stop_sequences:
+    if stop_sequences and isinstance(stop_sequences, str):
         stops = [s.strip() for s in stop_sequences.split(",") if s.strip()]
         grpo_args["stop_sequences"] = stops
-    if rewards:
+    if rewards and isinstance(rewards, str):
         available = set(list_reward_functions())
         parsed = [r.strip() for r in rewards.split(",") if r.strip()]
         unknown = [r for r in parsed if r not in available]
@@ -141,7 +141,7 @@ def _build_cli_overrides(
         opensloth_overrides["lora_args"] = lora_args
     if grpo_args:
         opensloth_overrides["grpo_args"] = grpo_args
-    if devices:
+    if devices and isinstance(devices, str):
         try:
             dev_list = [int(d) for d in devices.split(",") if d.strip()]
             if dev_list:
@@ -161,11 +161,10 @@ def _build_cli_overrides(
     return overrides
 
 @app.command()
-def main(
+def train(
     dataset: Path = typer.Argument(..., help="Path to the processed and sharded dataset.", exists=True),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Override the base model specified in the dataset config."),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output directory for LoRA weights and logs."),
-    preset: Optional[str] = typer.Option(None, "--preset", help="Training preset (e.g., 'quick', 'small', 'large')."),
     epochs: Optional[int] = typer.Option(None, "--epochs", help="Number of training epochs."),
     batch_size: Optional[int] = typer.Option(None, "--batch-size", help="Per-device batch size."),
     grad_accum: Optional[int] = typer.Option(None, "--grad-accum", help="Gradient accumulation steps."),
@@ -209,8 +208,11 @@ def main(
     """
     Trains a model using Group Relative Policy Optimization (GRPO) on a prepared dataset.
     """
-    if isinstance(preset, _typer_internal.models.OptionInfo):  # type: ignore
-        return app()
+    # Check if we're getting OptionInfo objects (indicates Typer help/autocomplete mode)
+    if isinstance(dataset, _typer_internal.models.OptionInfo):
+        # This happens during help generation or when missing required args
+        # Don't try to build config, just let Typer handle it
+        return
     cli_overrides = _build_cli_overrides(
         output, epochs, batch_size, grad_accum, lr,
         lora_r, lora_alpha, lora_dropout, lora_targets,
@@ -226,10 +228,7 @@ def main(
 
     builder = (
         TrainingConfigBuilder(dataset_path=str(dataset), method="grpo")
-        .with_preset(preset)
-        .infer_from_dataset()
         .with_cli_args(cli_overrides)
-        .finalise()
     )
 
     opensloth_cfg, train_args = builder.build()
@@ -284,5 +283,9 @@ def main(
     run_training(opensloth_cfg, train_args, use_tmux=use_tmux)
     typer.secho(f"✅ GRPO Training complete. Model saved to: {train_args.output_dir}", fg="green")
 
-if __name__ == "__main__":
+def main():
+    """Entry point for the CLI."""
     app()
+
+if __name__ == "__main__":
+    main()

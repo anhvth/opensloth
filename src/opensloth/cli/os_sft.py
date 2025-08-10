@@ -77,7 +77,7 @@ def _build_cli_overrides(
         "use_rslora": use_rslora,
         "bias": lora_bias,
     }.items() if v is not None}
-    if lora_targets:
+    if lora_targets and isinstance(lora_targets, str):
         targets = [t.strip() for t in lora_targets.split(",") if t.strip()]
         if targets:
             lora_args["target_modules"] = targets
@@ -106,7 +106,7 @@ def _build_cli_overrides(
         overrides["training_args"] = training_args
         
     # Device override
-    if devices:
+    if devices and isinstance(devices, str):
         try:
             dev_list = [int(d) for d in devices.split(",") if d.strip()]
             if dev_list:
@@ -117,7 +117,7 @@ def _build_cli_overrides(
     return overrides
 
 @app.command()
-def main(
+def train(
     dataset: Path = typer.Argument(..., help="Path to the processed and sharded dataset.", exists=True),
     
     # Model and Tokenizer
@@ -138,7 +138,6 @@ def main(
 
     # Training Hyperparameters
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output directory for LoRA weights and logs."),
-    preset: Optional[str] = typer.Option(None, help="Training preset (e.g., 'quick', 'small', 'large')."),
     epochs: Optional[int] = typer.Option(None, "--num-train-epochs", "-e", help="Number of training epochs."),
     max_steps: Optional[int] = typer.Option(None, "--max-steps", help="Max training steps (overrides epochs)."),
     batch_size: Optional[int] = typer.Option(None, "--per-device-train-batch-size", "-b", help="Per-device batch size."),
@@ -162,8 +161,11 @@ def main(
     """
     Trains a model using Supervised Fine-Tuning (SFT) on a prepared dataset.
     """
-    if isinstance(preset, _typer_internal.models.OptionInfo):
-        return app()
+    # Check if we're getting OptionInfo objects (indicates Typer help/autocomplete mode)
+    if isinstance(dataset, _typer_internal.models.OptionInfo):
+        # This happens during help generation or when missing required args
+        # Don't try to build config, just let Typer handle it
+        return
 
     cli_overrides = _build_cli_overrides(
         model=model, max_seq_length=max_seq_length, load_in_4bit=load_in_4bit, load_in_8bit=load_in_8bit,
@@ -177,10 +179,7 @@ def main(
 
     builder = (
         TrainingConfigBuilder(dataset_path=str(dataset), method="sft")
-        .with_preset(preset)
-        .infer_from_dataset()
         .with_cli_args(cli_overrides)
-        .finalise()
     )
 
     opensloth_cfg, train_args = builder.build()
@@ -188,10 +187,8 @@ def main(
     if not train_args.output_dir:
         train_args.output_dir = _generate_output_dir(opensloth_cfg.fast_model_args.model_name, str(dataset))
 
-    # For dry-run, show a cleaner summary with only CLI-provided values + essential info
     if dry_run:
         typer.echo("DRY RUN: SFT training configuration:")
-        # Show full configuration with all defaults
         summary = {
             "opensloth_config": opensloth_cfg.model_dump(),
             "training_args": train_args.model_dump(),
@@ -203,5 +200,9 @@ def main(
     run_training(opensloth_cfg, train_args, use_tmux=use_tmux)
     typer.secho(f"✅ SFT Training complete. Model saved to: {train_args.output_dir}", fg="green")
 
-if __name__ == "__main__":
+def main():
+    """Entry point for the CLI."""
     app()
+
+if __name__ == "__main__":
+    main()

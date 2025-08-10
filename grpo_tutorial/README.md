@@ -27,7 +27,7 @@ pip install "openslothai[cli] @ git+https://github.com/anhvth/opensloth.git"
 
 ## How to Run the Tutorial
 
-The entire pipeline is automated with shell scripts. Simply run them in order from the root of the `opensloth` project.
+The entire pipeline is automated with just **2 simple scripts** using OpenSloth's new unified `os-train` CLI. Each script handles both data preparation and training in one command.
 
 ```bash
 # Make sure you are in the root directory of the opensloth project
@@ -36,7 +36,16 @@ cd /path/to/opensloth
 # Grant execution permissions to the scripts
 chmod +x grpo_tutorial/scripts/*.sh
 
-# Run the scripts sequentially
+# Run the 2-step workflow
+bash grpo_tutorial/scripts/01_sft_end_to_end.sh      # SFT: Data prep + training
+bash grpo_tutorial/scripts/02_grpo_end_to_end.sh     # GRPO: Data prep + training
+```
+
+### Previous 4-Script Workflow (Still Available)
+
+If you prefer the step-by-step approach, the original 4 scripts are still available:
+
+```bash
 bash grpo_tutorial/scripts/00_prepare_sft_dataset.sh
 bash grpo_tutorial/scripts/01_train_sft.sh
 bash grpo_tutorial/scripts/02_prepare_grpo_dataset.sh
@@ -46,6 +55,40 @@ bash grpo_tutorial/scripts/03_train_grpo.sh
 ---
 
 ## Step-by-Step Breakdown
+
+### New Unified Workflow (Recommended)
+
+**Two Scripts, Complete Pipeline:**
+
+#### Step 1: End-to-End SFT Training
+
+**Script:** `grpo_tutorial/scripts/01_sft_end_to_end.sh`
+
+This script uses OpenSloth's new unified `os-train sft` command to:
+1. Prepare raw SFT data (downloads and formats `unsloth/OpenMathReasoning-mini`)
+2. Automatically tokenize and shard the dataset
+3. Run supervised fine-tuning in one seamless command
+
+-   **Input:** Raw `unsloth/OpenMathReasoning-mini` dataset (downloaded automatically)
+-   **Output:** A LoRA adapter trained for reasoning format at `outputs/sft_qwen_reasoning_model`
+
+#### Step 2: End-to-End GRPO Training
+
+**Script:** `grpo_tutorial/scripts/02_grpo_end_to_end.sh`
+
+This script uses OpenSloth's new unified `os-train grpo` command to:
+1. Automatically download and process `open-r1/DAPO-Math-17k-Processed`
+2. Tokenize and prepare the preference dataset
+3. Run GRPO training using the SFT model as the base
+
+-   **Input:** 
+    -   Raw `open-r1/DAPO-Math-17k-Processed` dataset (downloaded automatically)
+    -   SFT model from Step 1 (`outputs/sft_qwen_reasoning_model`)
+-   **Output:** Final reasoning model at `outputs/grpo_final_model`
+
+### Traditional Step-by-Step Workflow (Still Available)
+
+The original 4-script approach remains available for users who prefer granular control:
 
 ### Step 1: Prepare the SFT Dataset
 
@@ -164,9 +207,12 @@ The two-stage approach is crucial for optimal results:
 
 ### Key Benefits of OpenSloth's Approach
 
-- **Automated Reward Functions:** OpenSloth includes built-in reward functions specifically designed for mathematical reasoning.
-- **Efficient Multi-GPU Training:** The CLI tools automatically handle distributed training across multiple GPUs.
-- **Memory Optimization:** Uses advanced techniques like gradient checkpointing and mixed precision to handle large models efficiently.
+- **Unified CLI (`os-train`):** Combines data preparation and training into single commands for streamlined workflows
+- **Automated Data Processing:** Automatically downloads, tokenizes, and shards datasets for optimal multi-GPU performance  
+- **Automated Reward Functions:** OpenSloth includes built-in reward functions specifically designed for mathematical reasoning
+- **Efficient Multi-GPU Training:** The CLI tools automatically handle distributed training across multiple GPUs
+- **Memory Optimization:** Uses advanced techniques like gradient checkpointing and mixed precision to handle large models efficiently
+- **GPU Consistency:** Ensures data sharding and training use the same number of GPUs to prevent configuration errors
 
 ---
 

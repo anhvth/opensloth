@@ -81,7 +81,7 @@ def _build_cli_overrides(
         "use_rslora": use_rslora,
         "bias": lora_bias,
     }.items() if v is not None}
-    if lora_targets:
+    if lora_targets and isinstance(lora_targets, str):
         targets = [t.strip() for t in lora_targets.split(",") if t.strip()]
         if targets:
             lora_args["target_modules"] = targets
@@ -119,7 +119,7 @@ def _build_cli_overrides(
         overrides["training_args"] = training_args
         
     # Device override
-    if devices:
+    if devices and isinstance(devices, str):
         try:
             dev_list = [int(d) for d in devices.split(",") if d.strip()]
             if dev_list:
@@ -130,7 +130,7 @@ def _build_cli_overrides(
     return overrides
 
 @app.command()
-def main(
+def train(
     dataset: Path = typer.Argument(..., help="Path to the processed DPO dataset.", exists=True),
     
     # Model and Tokenizer
@@ -156,7 +156,6 @@ def main(
 
     # Training Hyperparameters
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output directory for LoRA weights and logs."),
-    preset: Optional[str] = typer.Option(None, help="Training preset (e.g., 'quick', 'small', 'large')."),
     epochs: Optional[int] = typer.Option(None, "--num-train-epochs", "-e", help="Number of training epochs."),
     max_steps: Optional[int] = typer.Option(None, "--max-steps", help="Max training steps (overrides epochs)."),
     batch_size: Optional[int] = typer.Option(None, "--per-device-train-batch-size", "-b", help="Per-device batch size."),
@@ -180,7 +179,7 @@ def main(
     """
     Trains a model using Direct Preference Optimization (DPO) on a prepared dataset.
     """
-    if isinstance(preset, _typer_internal.models.OptionInfo):
+    if isinstance(dataset, _typer_internal.models.OptionInfo):
         return app()
 
     cli_overrides = _build_cli_overrides(
@@ -197,10 +196,7 @@ def main(
 
     builder = (
         TrainingConfigBuilder(dataset_path=str(dataset), method="dpo")
-        .with_preset(preset)
-        .infer_from_dataset()
         .with_cli_args(cli_overrides)
-        .finalise()
     )
 
     opensloth_cfg, train_args = builder.build()
@@ -223,5 +219,9 @@ def main(
     run_training(opensloth_cfg, train_args, use_tmux=use_tmux)
     typer.secho(f"✅ DPO Training complete. Model saved to: {train_args.output_dir}", fg="green")
 
-if __name__ == "__main__":
+def main():
+    """Entry point for the CLI."""
     app()
+
+if __name__ == "__main__":
+    main()

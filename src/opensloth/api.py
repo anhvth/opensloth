@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, TYPE_CHECKING
 import json
 import tempfile
 import textwrap
@@ -17,6 +17,9 @@ from opensloth.scripts.opensloth_trainer import (
     setup_envs,
     run_tmux_training,
 )
+
+if TYPE_CHECKING:
+    from opensloth.dataset.config_schema import DatasetPrepConfig
 
 def _serialise_configs_to_temp(opensloth_config: OpenSlothConfig, training_args: TrainingArguments) -> Path:
     tmp_dir = Path(tempfile.mkdtemp(prefix="opensloth_cli_"))
@@ -130,8 +133,18 @@ def run_training(
         print(f"❌ Training process failed with exit code {process.returncode}.")
     return opensloth_config, training_args
 
-def run_prepare_data(config: dict) -> str:
-    method = config.get("training_type", "sft")
+def run_prepare_data(config: "DatasetPrepConfig") -> str:
+    """Runs the appropriate dataset preparer based on the config."""
+    from opensloth.dataset.config_schema import DatasetPrepConfig
+    
+    # Convert Pydantic model to dict for backwards compatibility
+    if isinstance(config, DatasetPrepConfig):
+        config_dict = config.model_dump()
+    else:
+        # Backwards compatibility - assume it's already a dict
+        config_dict = config
+    
+    method = config_dict.get("training_type", "sft")
     if method == "grpo":
         import importlib.util, pathlib
         # prepare_grpo.py lives at repository_root/prepare_dataset/prepare_grpo.py (not inside src/opensloth)
@@ -145,9 +158,17 @@ def run_prepare_data(config: dict) -> str:
         preparer = getattr(module, "GRPODatasetPreparer")()
     else:
         from opensloth.dataset import QwenDatasetPreparer, GemmaDatasetPreparer  # type: ignore
-        model_name = config.get("tok_name", "").lower()
+        model_name = config_dict.get("tok_name", "").lower()
         preparer = GemmaDatasetPreparer() if "gemma" in model_name else QwenDatasetPreparer()
-    output_dir = preparer.run_with_config(config)
+    
+    output_dir = preparer.run_with_config(config_dict)
     return output_dir
 
 __all__ = ["run_training", "run_prepare_data"]
+
+# Export DatasetPrepConfig for convenience
+def __getattr__(name):
+    if name == "DatasetPrepConfig":
+        from opensloth.dataset.config_schema import DatasetPrepConfig
+        return DatasetPrepConfig
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

@@ -11,6 +11,10 @@ from opensloth.scripts.opensloth_trainer import run_mp_training, setup_envs
 
 
 def main() -> None:
+    # Setup Hugging Face logging interception early - before any HF library imports
+    from opensloth.logging_config import setup_huggingface_logging_interception
+    setup_huggingface_logging_interception()
+    
     cfg = json.load(sys.stdin)
     print("[JOB] Building configs...")
 

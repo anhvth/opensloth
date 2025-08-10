@@ -9,24 +9,29 @@ import os
 import sys
 
 def main():
-    parser = argparse.ArgumentParser(description="TMux training worker for OpenSloth")
-    parser.add_argument("config_file", help="Path to the configuration file")
-    parser.add_argument("--rank", type=int, required=True, help="Local rank of this worker")
-    parser.add_argument("--world_size", type=int, required=True, help="Total number of workers")
+    # Setup comprehensive logging interception
+    from opensloth.logging_config import setup_huggingface_logging_interception, setup_stdout_interception_for_training
+    setup_huggingface_logging_interception()
     
+    # Set training active flag for stdout interception
+    import os
+    os.environ["OPENSLOTH_TRAINING_ACTIVE"] = "1"
+    setup_stdout_interception_for_training()
+    
+    import argparse
+    from opensloth.scripts.opensloth_trainer import load_config_from_path, train_on_single_gpu
+
+    parser = argparse.ArgumentParser(description="Train worker for tmux mode")
+    parser.add_argument("config_file", help="Path to config file")
+    parser.add_argument("--rank", type=int, required=True, help="GPU rank to use")
     args = parser.parse_args()
+
+    opensloth_config, training_config = load_config_from_path(args.config_file)
     
-    # Set environment variables for tmux mode
-    os.environ["USE_TMUX"] = "1"
+    # Set environment variables for rank
     os.environ["OPENSLOTH_LOCAL_RANK"] = str(args.rank)
+    os.environ["OPENSLOTH_WORLD_SIZE"] = str(len(opensloth_config.devices))
     
-    # Import and run the training function
-    from opensloth.scripts.opensloth_trainer import initialize_training_config, train_on_single_gpu
-    
-    # Load configuration
-    opensloth_config, training_config = initialize_training_config(args.config_file)
-    
-    # Get the GPU for this rank
     gpu = opensloth_config.devices[args.rank]
     
     # Run training on the assigned GPU

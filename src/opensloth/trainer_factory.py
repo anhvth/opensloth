@@ -230,49 +230,18 @@ def _create_grpo_trainer(
         def create_reward_preset(_task_type):
             return ["dummy"]
 
-    # Build GRPOConfig from HF TrainingArguments + GRPO-specific args
+    # Build GRPOConfig by starting with base TrainingArguments and overriding with GRPO specifics.
+    # This is a cleaner "whitelist" approach that avoids a brittle blacklist of unsupported args.
     grpo_config_dict = hf_train_args.to_dict()
+    
+    # Remove the few parameters that GRPOConfig doesn't support
+    # Based on analysis, only these parameters need to be excluded:
+    unsupported_by_grpo = {"dataset_num_proc"}
+    for param in unsupported_by_grpo:
+        grpo_config_dict.pop(param, None)
 
-    # Remove args not supported by GRPOConfig to avoid constructor errors
-    unsupported_args = {
-        "dataset_num_proc",
-        "save_only_model",
-        "push_to_hub_model_id",
-        "push_to_hub_organization",
-        "push_to_hub_token",
-        "hub_model_id",
-        "hub_token",
-        "hub_private_repo",
-        "hub_strategy",
-        "hub_always_push",
-        "gradient_checkpointing_kwargs",
-        "include_inputs_for_metrics",
-        "eval_do_concat_batches",
-        "fp16_full_eval",
-        "tf32",
-        "jit_mode_eval",
-        "use_ipex",
-        "bf16_full_eval",
-        "eval_on_start",
-        "ignore_data_skip",
-        "fsdp_config",
-        "deepspeed_plugin",
-        "label_smoothing_factor",
-        "debug",
-        "sharded_ddp",
-        "accelerator_config",
-        "dispatch_batches",
-        "split_batches",
-        "include_tokens_per_second",
-        "neftune_noise_alpha",
-        "optim_target_modules",
-        "batch_eval_metrics",
-        "eval_use_gather_object",
-    }
-    filtered_config = {k: v for k, v in grpo_config_dict.items() if k not in unsupported_args}
-
-    # Map our args -> GRPO parameter names
-    filtered_config.update(
+    # Map our args -> GRPOConfig parameter names
+    grpo_config_dict.update(
         {
             "num_generations": grpo_args.group_size,
             "max_completion_length": grpo_args.max_new_tokens,
@@ -283,12 +252,45 @@ def _create_grpo_trainer(
         }
     )
     if grpo_args.top_k is not None:
-        filtered_config["top_k"] = grpo_args.top_k
+        grpo_config_dict["top_k"] = grpo_args.top_k
+
+    # Configure vLLM and generation parameters
+    try:
+        stop_sequences = list(grpo_args.stop_sequences)
+        if tokenizer.eos_token and tokenizer.eos_token not in stop_sequences:
+            stop_sequences.append(tokenizer.eos_token)
+
+        # Configure vLLM-specific parameters that are directly supported by GRPOConfig
+        if grpo_args.min_p is not None:
+            grpo_config_dict["min_p"] = grpo_args.min_p
+        
+        # Configure generation parameters through generation_kwargs
+        generation_kwargs = {
+            "do_sample": True,  # Required for GRPO sampling
+            "pad_token_id": tokenizer.eos_token if hasattr(tokenizer, 'eos_token') else None,
+        }
+        
+        # Add stop sequences if any
+        if stop_sequences:
+            generation_kwargs["stop_strings"] = stop_sequences
+        
+        grpo_config_dict["generation_kwargs"] = generation_kwargs
+        
+        logger.info(f"Configured generation parameters for GRPO: {generation_kwargs}")
+        
+    except Exception as e:
+        logger.warning(f"Could not configure generation parameters: {e}. Training will proceed with defaults.")
 
     try:
-        grpo_config = GRPOConfig(**filtered_config)
-    except Exception as e:
-        logger.error(f"Failed to create GRPOConfig with keys: {list(filtered_config.keys())}")
+        # Instantiate GRPOConfig. If an argument is invalid, it will raise a TypeError,
+        # which is a clear and immediate signal of a configuration issue.
+        grpo_config = GRPOConfig(**grpo_config_dict)
+    except TypeError as e:
+        logger.error(
+            "Failed to create GRPOConfig. This might be due to an argument in "
+            f"your TrainingArguments that is incompatible with trl.GRPOConfig. Error: {e}"
+        )
+        logger.error(f"Attempted to create GRPOConfig with keys: {list(grpo_config_dict.keys())}")
         raise ValueError(f"GRPOConfig creation failed: {e}")
 
     # Validate dataset format
@@ -326,19 +328,17 @@ def _create_grpo_trainer(
     try:
         trainer = GRPOTrainer(
             model=model,
-            ref_model=None,
             args=grpo_config,
             train_dataset=train_dataset,
             processing_class=tokenizer,
             reward_funcs=reward_funcs,
         )
-        logger.info("UnslothGRPOTrainer setup completed successfully with reward_funcs.")
+        logger.info("GRPOTrainer setup completed successfully with reward_funcs.")
     except TypeError as e:
         if "reward_funcs" in str(e):
             # Fallback to standard TRL GRPOTrainer without reward_funcs
             trainer = GRPOTrainer(
                 model=model,
-                ref_model=None,
                 args=grpo_config,
                 train_dataset=train_dataset,
                 processing_class=tokenizer,
@@ -476,7 +476,40 @@ def _init_model_and_tokenizer(
         logger.info(f"Loading model from {opensloth_config.pretrained_lora} with LoRA weights")
         opensloth_config.fast_model_args.model_name = opensloth_config.pretrained_lora
 
-    model, tokenizer = FastLanguageModel.from_pretrained(**opensloth_config.fast_model_args.model_dump())
+    # Configure GRPO-specific parameters for vLLM fast inference
+    model_args = opensloth_config.fast_model_args.model_dump()
+    
+    # For GRPO training, enable fast inference and configure vLLM properly
+    if opensloth_config.training_type == "grpo":
+        logger.info("Configuring model for GRPO training with vLLM fast inference")
+        
+        # Enable fast inference for GRPO (required for vLLM backend)
+        model_args["fast_inference"] = True
+        
+        # Set max_lora_rank if LoRA is configured and not already set
+        if (opensloth_config.lora_args is not None and 
+            model_args.get("max_lora_rank") is None):
+            model_args["max_lora_rank"] = opensloth_config.lora_args.r
+            logger.info(f"Set max_lora_rank to {model_args['max_lora_rank']} for GRPO training")
+        
+        # For GRPO with 4-bit quantization, ensure model name ends with "-bnb-4bit"
+        # This is required for vLLM to properly load quantized models
+        if model_args.get("load_in_4bit", False):
+            model_name = model_args["model_name"]
+            if not model_name.lower().endswith("-bnb-4bit"):
+                logger.warning(
+                    f"Model name '{model_name}' does not end with '-bnb-4bit'. "
+                    "This may cause issues with vLLM 4-bit loading. "
+                    "Consider using a model with '-bnb-4bit' suffix for optimal GRPO performance."
+                )
+        
+        # Configure GPU memory utilization for vLLM
+        if "gpu_memory_utilization" not in model_args or model_args["gpu_memory_utilization"] == 0.7:
+            # Use a slightly lower memory utilization for GRPO to leave room for generation
+            model_args["gpu_memory_utilization"] = 0.6
+            logger.info(f"Set gpu_memory_utilization to {model_args['gpu_memory_utilization']} for GRPO")
+
+    model, tokenizer = FastLanguageModel.from_pretrained(**model_args)
     _maybe_hot_fix_gemma(opensloth_config, logger, tokenizer)
     logger.finish_timing("model_loading")
 
@@ -529,7 +562,7 @@ def _get_trainer(
 
     logger = get_opensloth_logger()
     base_path = opensloth_config.data_cache_path
-    local_rank = int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0"))
+    local_rank = int(os.environ.get("OPENSLOTH_LOCAL_RANK"))
     shard_path = os.path.join(base_path, f"shard_{local_rank}")
     if os.path.isdir(shard_path):
         logger.info(f"Loading rank-specific shard dataset from {shard_path}")
@@ -660,6 +693,10 @@ def _create_trainer(
 
     # Always add epoch shuffle callback for visibility (safe for all trainers)
     # ShuffleData callback removed; per-rank sharded datasets rely on standard sampler behavior.
+
+    # Add OpenSloth's custom logging callback to replace HF's default console logging
+    from opensloth.logging_config import add_opensloth_logging_callback
+    trainer = add_opensloth_logging_callback(trainer)
 
     return trainer
 

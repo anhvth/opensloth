@@ -1,7 +1,7 @@
 from multiprocessing import cpu_count
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 WORKERS = max(1, cpu_count() // 2)
 
@@ -12,12 +12,36 @@ class FastModelArgs(BaseModel):
     Derived from unsloth/models/loader.py: FastModel.from_pretrained
     """
 
-    model_name: str
-    max_seq_length: int = 4096
-    load_in_4bit: bool = True
-    load_in_8bit: bool = False
-    full_finetuning: bool = False
+    model_name: str = Field(
+        ..., 
+        description="The model name or path to use.", 
+        json_schema_extra={'cli_alias': 'model'}
+    )
+    max_seq_length: int = Field(
+        4096, 
+        description="Maximum sequence length for the model.", 
+        json_schema_extra={'cli_alias': 'max-seq-length'}
+    )
+    load_in_4bit: bool = Field(
+        True, 
+        description="Load the model in 4-bit (QLoRA).", 
+        json_schema_extra={'cli_alias': 'load-in-4bit'}
+    )
+    load_in_8bit: bool = Field(
+        False, 
+        description="Load the model in 8-bit.", 
+        json_schema_extra={'cli_alias': 'load-in-8bit'}
+    )
+    full_finetuning: bool = Field(
+        False, 
+        description="Perform full fine-tuning instead of LoRA.", 
+        json_schema_extra={'cli_alias': 'full-finetuning'}
+    )
     use_gradient_checkpointing: str = "unsloth"
+    # vLLM-specific parameters for GRPO training
+    fast_inference: bool = False
+    max_lora_rank: int | None = None
+    gpu_memory_utilization: float = 0.7
 
     class Config:
         """Pydantic configuration for DataConfig."""
@@ -55,21 +79,21 @@ class GRPOArgs(BaseModel):
 
     This supports different task types (math, code, general) with appropriate reward functions.
     """
-    group_size: int = Field(default=4, description="Number of sampled responses per prompt")
-    max_new_tokens: int = Field(default=128, description="Max new tokens to sample per response")
+    group_size: int = Field(default=4, description="Number of sampled responses per prompt", json_schema_extra={'cli_alias': 'group-size'})
+    max_new_tokens: int = Field(default=128, description="Max new tokens to sample per response", json_schema_extra={'cli_alias': 'max-new'})
     temperature: float = Field(default=1.0, description="Sampling temperature")
     top_p: float = Field(default=0.9, description="Nucleus sampling top_p")
     top_k: int | None = Field(default=None, description="Top-k sampling (None = disabled)")
     min_p: float = Field(default=0.1, description="Minimum probability threshold")
-    kl_coef: float = Field(default=0.05, description="KL coefficient vs reference policy")
+    kl_coef: float = Field(default=0.05, description="KL coefficient vs reference policy", json_schema_extra={'cli_alias': 'beta'})
     
     # Task-specific configuration
-    task_type: str = Field(default="general", description="Task type: 'math', 'code', 'general', 'reasoning'")
-    reward_functions: list[str] = Field(default_factory=list, description="List of reward function names to apply (auto-selected if empty)")
+    task_type: str = Field(default="general", description="Task type: 'math', 'code', 'general', 'reasoning'", json_schema_extra={'cli_alias': 'task'})
+    reward_functions: list[str] = Field(default_factory=list, description="List of reward function names to apply (auto-selected if empty)", json_schema_extra={'cli_alias': 'rewards'})
     use_custom_chat_template: bool = Field(default=True, description="Use task-specific chat template")
     
     # Prompt processing
-    max_prompt_length: int = Field(default=512, description="Maximum prompt token length (truncation boundary)")
+    max_prompt_length: int = Field(default=512, description="Maximum prompt token length (truncation boundary)", json_schema_extra={'cli_alias': 'max-prompt-len'})
     prompt_length_percentile: float = Field(default=0.9, description="Percentile for automatic prompt length filtering")
     
     # Training control  
@@ -92,16 +116,17 @@ class LoraArgs(BaseModel):
     finetune_language_layers: bool = True
     finetune_attention_modules: bool = True
     finetune_mlp_modules: bool = True
-    r: int = 8
-    lora_alpha: int = 8
-    lora_dropout: float = 0.0
+    r: int = Field(8, description="LoRA rank (`r`).", json_schema_extra={'cli_alias': 'lora-r'})
+    lora_alpha: int = Field(16, description="LoRA alpha.", json_schema_extra={'cli_alias': 'lora-alpha'})  # Updated default
+    lora_dropout: float = Field(0.0, description="LoRA dropout.", json_schema_extra={'cli_alias': 'lora-dropout'})
     bias: str = "none"
     random_state: int = 3407
     target_modules: list[str] = Field(
         default_factory=_default_target_modules,
         description="List of target modules for LoRA application",
+        json_schema_extra={'cli_alias': 'targets'}
     )
-    use_rslora: bool = False
+    use_rslora: bool = Field(False, description="Use RSLoRA (Rank-Stabilized LoRA).", json_schema_extra={'cli_alias': 'use-rslora'})
 
     class Config:
         """Pydantic configuration for DataConfig."""
@@ -160,8 +185,8 @@ class OpenSlothConfig(BaseModel):
 
         extra = "allow"
 
-    # post assert ensure data_cache_path exists
-    def model_post_init(self, __context: Any) -> None:
+    @model_validator(mode='after')
+    def validate_training_type_args(self) -> "OpenSlothConfig":
         """Post-initialization validation for OpenSlothConfig."""
         if self.data_cache_path is None:
             raise ValueError("data_cache_path must be specified")
@@ -184,7 +209,10 @@ class OpenSlothConfig(BaseModel):
             if self.dpo_args is not None:
                 raise ValueError("dpo_args should not be set for GRPO training")
         else:
-            # Clear unrelated args to avoid accidental leakage
+            # For SFT, ensure other args are not present.
+            if self.dpo_args is not None or self.grpo_args is not None:
+                import warnings
+                warnings.warn("For SFT training, dpo_args and grpo_args will be ignored.")
             self.dpo_args = None
             self.grpo_args = None
 
@@ -193,19 +221,25 @@ class OpenSlothConfig(BaseModel):
             raise NotImplementedError(
                 f"Training type '{self.training_type}' is not yet implemented. Supported: sft, dpo, grpo"
             )
+        
+        # Ensure model_name is provided
+        if self.fast_model_args and not self.fast_model_args.model_name:
+             raise ValueError("fast_model_args.model_name must be specified.")
+
+        return self
 
 
 class TrainingArguments(BaseModel):
     """Configuration for Hugging Face TrainingArguments."""
 
-    output_dir: str = "saves/loras/"
-    per_device_train_batch_size: int = 8
-    learning_rate: float = 2e-4
-    gradient_accumulation_steps: int = 16
+    output_dir: str = Field("saves/loras/", description="Output directory for checkpoints and logs.", json_schema_extra={'cli_alias': 'output'})
+    per_device_train_batch_size: int = Field(2, description="Batch size per GPU.", json_schema_extra={'cli_alias': 'bs'})
+    learning_rate: float = Field(2e-4, description="The initial learning rate.", json_schema_extra={'cli_alias': 'lr'})
+    gradient_accumulation_steps: int = Field(4, description="Number of gradient accumulation steps.", json_schema_extra={'cli_alias': 'grad-accum'})
     logging_steps: int = 1
-    num_train_epochs: int = 1
+    num_train_epochs: int = Field(3, description="Total number of training epochs.", json_schema_extra={'cli_alias': 'epochs'})
     lr_scheduler_type: str = "linear"
-    warmup_steps: int = 5
+    warmup_steps: int = Field(10, description="Warmup steps for LR scheduler.", json_schema_extra={'cli_alias': 'warmup'})
     save_total_limit: int = 2
     optim: str = "adamw_8bit"
     weight_decay: float = 0.01

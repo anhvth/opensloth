@@ -189,20 +189,23 @@ def patch_inner_training_loop_for_sft(trainer, sequence_packing):
             self.deepspeed = self.model_wrapped
 
         # ckpt loading
-        try:
-            if (
-                resume_from_checkpoint is None
-                # and self.args.get("resume_from_checkpoint")
-                and hasattr(self.args, "resume_from_checkpoint")
-                and os.path.exists(self.args.resume_from_checkpoint)
-            ):
-                resume_from_checkpoint = self.args.resume_from_checkpoint
-                logger.info(f"Resuming from checkpoint: {resume_from_checkpoint}")
-        except Exception as e:
-            print(f"Error occurred while resuming from checkpoint: {e}")
+        # MODIFICATION: Refactor to prevent TypeError on None and add clear logging.
+        # Remove the vague try-except block.
+        ckpt_path_from_args = getattr(self.args, "resume_from_checkpoint", None)
+        if resume_from_checkpoint is None and ckpt_path_from_args:
+            if ckpt_path_from_args and os.path.exists(ckpt_path_from_args):
+                resume_from_checkpoint = ckpt_path_from_args
+                logger.info(f"Resuming from checkpoint specified in args: {resume_from_checkpoint}")
+            elif ckpt_path_from_args:
+                logger.warning(
+                    f"Checkpoint path specified in args but not found: {ckpt_path_from_args}. Starting from scratch."
+                )
 
         if resume_from_checkpoint is not None:
-            if self.is_deepspeed_enabled:
+            if not os.path.exists(resume_from_checkpoint):
+                logger.warning(f"Specified checkpoint path {resume_from_checkpoint} does not exist. Starting from scratch.")
+                resume_from_checkpoint = None  # Prevent further errors
+            elif self.is_deepspeed_enabled:
                 deepspeed_load_checkpoint(
                     self.model_wrapped,
                     resume_from_checkpoint,
@@ -347,8 +350,6 @@ def patch_inner_training_loop_for_sft(trainer, sequence_packing):
             total_updates = steps_in_epoch // args.gradient_accumulation_steps + int(
                 remainder < args.gradient_accumulation_steps
             )
-            total_tokens = []
-            effective_token_count = []
             for _ in range(total_updates):
                 update_step += 1
                 num_batches = (
@@ -375,25 +376,9 @@ def patch_inner_training_loop_for_sft(trainer, sequence_packing):
                             step + 1
                         ) == steps_in_epoch
 
-                    # -- log the number of tokens seen in the current batch
-                    _total_tokens, _effective_tokens = calculate_token_metrics(
-                        inputs["input_ids"],
-                        pad_token_id=self.processing_class.pad_token_id,
-                    )
-                    total_tokens.append(_total_tokens)
-                    effective_token_count.append(_effective_tokens)
-
-                    # # every 10 steps or at the last step, log the token metrics
-                    if update_step % 10 == 0 and i == len(batch_samples) - 1:
-                        token_metrics = {
-                            "total_tokens": sum(total_tokens) / 1e6,
-                            "effective_tokens": sum(effective_token_count) / 1e6,
-                        }
-
-                        print(
-                            f"[Step {update_step}] Effective Tokens: {token_metrics['effective_tokens']:.1f}M/{token_metrics['total_tokens']:.1f}M"
-                        )
-
+                    # MODIFICATION: Remove token logging from here to avoid redundancy.
+                    # It is better handled within the standard `_maybe_log_save_evaluate` call.
+                    # We can add these metrics to the `logs` dictionary if needed.
                     # <<< OpenSloth Customization <<<#
 
                     # Since we perform prefetching, we need to manually set sync_gradients
