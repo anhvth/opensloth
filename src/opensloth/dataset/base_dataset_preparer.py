@@ -3,22 +3,24 @@ Base class for dataset preparation with common functionality.
 Now also supports programmatic runs via `run_with_namespace` and `run_with_config`.
 """
 
-import os
 import argparse
+import contextlib
+import hashlib
+import json
+import os
 import random
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any, Union
 from pathlib import Path
 from types import SimpleNamespace
-import json
-import hashlib
+from typing import Any, Dict, Optional, Union
 
 import datasets
 from speedy_utils import *
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
-from .utils import train_on_target_text_only
+
 from .config_printer import DatasetPreparationConfigPrinter
+from .utils import train_on_target_text_only
 
 # Unsloth utilities - will be imported lazily to avoid slow startup
 
@@ -374,7 +376,7 @@ class BaseDatasetPreparer(ABC):
             # Import debug function lazily to avoid unsloth initialization during import
             from opensloth._debug_dataloader import debug_chat_dataloader_for_training
             debug_chat_dataloader_for_training(dataloader, self.tokenizer, n_example=self.args.debug)
-            print(f"[INFO] Debug HTML written to .log/dataloader_examples.html")
+            print("[INFO] Debug HTML written to .log/dataloader_examples.html")
     
     def save_dataset(self, data: datasets.Dataset):
         """Save processed dataset to disk."""
@@ -385,10 +387,8 @@ class BaseDatasetPreparer(ABC):
             num_shards = max(1, int(getattr(self.args, 'gpus', 1)))
             # Optional deterministic shuffle before sharding so each shard gets diverse samples
             if num_shards > 1:
-                try:
+                with contextlib.suppress(Exception):
                     data = data.shuffle(seed=42)
-                except Exception:
-                    pass
 
             for i in range(num_shards):
                 shard_path = os.path.join(self.args.output_dir, f"shard_{i}")
@@ -431,7 +431,7 @@ class BaseDatasetPreparer(ABC):
     # ------------------------------
     # Metadata & hashing
     # ------------------------------
-    def _prep_config_core(self) -> Dict[str, Any]:
+    def _prep_config_core(self) -> dict[str, Any]:
         """Return the subset of args that define dataset content.
 
         This signature is used to determine if a preprocessed dataset matches
@@ -451,11 +451,11 @@ class BaseDatasetPreparer(ABC):
             "preparer_class": self.__class__.__name__,
         }
 
-    def _hash_config(self, cfg: Dict[str, Any]) -> str:
+    def _hash_config(self, cfg: dict[str, Any]) -> str:
         payload = json.dumps(cfg, sort_keys=True, ensure_ascii=False)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-    def _build_metadata(self) -> Dict[str, Any]:
+    def _build_metadata(self) -> dict[str, Any]:
         core = self._prep_config_core()
         return {
             "config": core,
@@ -489,19 +489,19 @@ class BaseDatasetPreparer(ABC):
         
         # Check if dataset is empty and provide helpful error
         if len(data) == 0:
-            print(f"\n❌ [ERROR] No samples remain after processing!")
+            print("\n❌ [ERROR] No samples remain after processing!")
             print(f"📊 Original samples: {len(dataset) if 'dataset' in locals() else 'Unknown'}")
             print(f"🔍 After filtering: {len(data)}")
-            print(f"\n💡 This usually happens because:")
+            print("\n💡 This usually happens because:")
             print(f"   • All samples were longer than max_seq_length ({self.args.max_seq_length})")
-            print(f"   • All samples had no training labels (when using --train-on-target-only)")
-            print(f"   • Chat template or response patterns don't match the data")
-            print(f"\n🛠️  Try these solutions:")
+            print("   • All samples had no training labels (when using --train-on-target-only)")
+            print("   • Chat template or response patterns don't match the data")
+            print("\n🛠️  Try these solutions:")
             print(f"   • Increase --max-seq-length (currently {self.args.max_seq_length})")
-            print(f"   • Use a different --chat-template")
-            print(f"   • Check --instruction-part and --response-part patterns")
-            print(f"   • Use opensloth-dataset debug to analyze your data")
-            print(f"   • Try more samples with --samples")
+            print("   • Use a different --chat-template")
+            print("   • Check --instruction-part and --response-part patterns")
+            print("   • Use opensloth-dataset debug to analyze your data")
+            print("   • Try more samples with --samples")
             raise RuntimeError("Dataset preparation failed: No samples remaining after processing")
         
         # Debug visualization or save
@@ -511,7 +511,7 @@ class BaseDatasetPreparer(ABC):
         else:
             self.save_dataset(data)
             # Show final statistics
-            print(f"\n🎉 [SUCCESS] Dataset preparation completed!")
+            print("\n🎉 [SUCCESS] Dataset preparation completed!")
             print(f"📁 Output: {self.args.output_dir}")
             print(f"📊 Final dataset contains: {len(data)} samples")
             if hasattr(self, '_last_size'):
@@ -520,7 +520,7 @@ class BaseDatasetPreparer(ABC):
     # ------------------------------
     # Programmatic API for GUIs/SDKs
     # ------------------------------
-    def _namespace_from_dict(self, cfg: Dict[str, Any]) -> argparse.Namespace:
+    def _namespace_from_dict(self, cfg: dict[str, Any]) -> argparse.Namespace:
         """Convert a dict into an argparse.Namespace with defaults applied."""
         # build defaults from parser then update with cfg
         parser = self.create_argument_parser()
@@ -559,19 +559,19 @@ class BaseDatasetPreparer(ABC):
 
         # Check if dataset is empty and provide helpful error
         if len(data) == 0:
-            print(f"\n❌ [ERROR] No samples remain after processing!")
+            print("\n❌ [ERROR] No samples remain after processing!")
             print(f"📊 Original samples: {len(dataset) if 'dataset' in locals() else 'Unknown'}")
             print(f"🔍 After filtering: {len(data)}")
-            print(f"\n💡 This usually happens because:")
+            print("\n💡 This usually happens because:")
             print(f"   • All samples were longer than max_seq_length ({self.args.max_seq_length})")
-            print(f"   • All samples had no training labels (when using --train-on-target-only)")
-            print(f"   • Chat template or response patterns don't match the data")
-            print(f"\n🛠️  Try these solutions:")
+            print("   • All samples had no training labels (when using --train-on-target-only)")
+            print("   • Chat template or response patterns don't match the data")
+            print("\n🛠️  Try these solutions:")
             print(f"   • Increase --max-seq-length (currently {self.args.max_seq_length})")
-            print(f"   • Use a different --chat-template")
-            print(f"   • Check --instruction-part and --response-part patterns")
-            print(f"   • Use opensloth-dataset debug to analyze your data")
-            print(f"   • Try more samples with --samples")
+            print("   • Use a different --chat-template")
+            print("   • Check --instruction-part and --response-part patterns")
+            print("   • Use opensloth-dataset debug to analyze your data")
+            print("   • Try more samples with --samples")
             raise RuntimeError("Dataset preparation failed: No samples remaining after processing")
 
         # Debug visualization or save
@@ -581,7 +581,7 @@ class BaseDatasetPreparer(ABC):
         else:
             self.save_dataset(data)
             # Show final statistics
-            print(f"\n🎉 [SUCCESS] Dataset preparation completed!")
+            print("\n🎉 [SUCCESS] Dataset preparation completed!")
             print(f"📁 Output: {self.args.output_dir}")
             print(f"📊 Final dataset contains: {len(data)} samples")
             if hasattr(self, '_last_size'):
@@ -589,7 +589,7 @@ class BaseDatasetPreparer(ABC):
 
         return self.args.output_dir
 
-    def run_with_config(self, cfg: Dict[str, Any]) -> str:
+    def run_with_config(self, cfg: dict[str, Any]) -> str:
         """Run the pipeline using a plain dictionary config.
 
         This is a convenience wrapper around `run_with_namespace`.

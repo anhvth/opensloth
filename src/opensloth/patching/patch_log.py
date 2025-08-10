@@ -1,6 +1,6 @@
 import os
 import time
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
 import numpy as np
 from fastcore.all import patch
@@ -15,7 +15,7 @@ WAIT_WARNING_THRESHOLD = 2
 # SMART AGGREGATION STRATEGIES
 # =====================================================================================
 # Mapping of metric names to their aggregation strategy
-AGGREGATION_STRATEGIES: Dict[str, str] = {
+AGGREGATION_STRATEGIES: dict[str, str] = {
     # === Metrics that should be AVERAGED across GPUs ===
     # Loss metrics (mean is the most meaningful for loss)
     "loss": "mean",
@@ -234,7 +234,7 @@ def patch_log_for_multi_gpu(trainer):
         # Filter for numeric values that can be aggregated
         numeric_keys_to_sync = [
             k for k, v in logs.items() 
-            if isinstance(v, (int, float)) and not np.isnan(v) and not np.isinf(v)
+            if isinstance(v, int | float) and not np.isnan(v) and not np.isinf(v)
         ]
 
         if numeric_keys_to_sync:
@@ -274,12 +274,11 @@ def patch_log_for_multi_gpu(trainer):
                 self.control = self.callback_handler.on_log(
                     self.args, self.state, self.control, logs
                 )
-        else:
-            # No numeric metrics to sync, use standard single-GPU logging
-            if is_main:
-                self.control = self.callback_handler.on_log(
-                    self.args, self.state, self.control, logs
-                )
+        # No numeric metrics to sync, use standard single-GPU logging
+        elif is_main:
+            self.control = self.callback_handler.on_log(
+                self.args, self.state, self.control, logs
+            )
         # === OPENSLOTH DYNAMIC PATCH END ===
 
     return trainer
@@ -294,7 +293,7 @@ def _wait_for_directory(cache_dir: str, rank: int) -> None:
 
 
 def _initialize_mmaps_dynamically(
-    numeric_keys: List[str],
+    numeric_keys: list[str],
     cache_dir: str,
     world_size: int,
     rank: int,
@@ -406,9 +405,7 @@ def _aggregate_logs(
         strategy = AGGREGATION_STRATEGIES.get(key, DEFAULT_AGGREGATION)
         
         # Handle dynamic reward function keys (e.g., "rewards/custom_reward/mean")
-        if strategy == DEFAULT_AGGREGATION and key.startswith("rewards/") and "/mean" in key:
-            strategy = "mean"
-        elif strategy == DEFAULT_AGGREGATION and key.startswith("rewards/") and "/std" in key:
+        if (strategy == DEFAULT_AGGREGATION and key.startswith("rewards/") and "/mean" in key) or (strategy == DEFAULT_AGGREGATION and key.startswith("rewards/") and "/std" in key):
             strategy = "mean"
 
         # Apply the aggregation strategy

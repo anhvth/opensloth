@@ -70,6 +70,12 @@ def train_on_single_gpu(
     # Set rank/env identifiers BEFORE any logging interception so logger picks them up
     os.environ["OPENSLOTH_LOCAL_RANK"] = str(opensloth_config.devices.index(gpu))
     os.environ["OPENSLOTH_WORLD_SIZE"] = str(len(opensloth_config.devices))
+    # Also set standard torch.distributed expected env vars (helps if any library
+    # attempts implicit initialization). We rely on spawn, not torchrun, so we
+    # must populate these explicitly.
+    os.environ.setdefault("RANK", os.environ["OPENSLOTH_LOCAL_RANK"])  # single-node so rank==local_rank
+    os.environ.setdefault("LOCAL_RANK", os.environ["OPENSLOTH_LOCAL_RANK"])  # for completeness
+    os.environ.setdefault("WORLD_SIZE", os.environ["OPENSLOTH_WORLD_SIZE"])  # matches device count
     # os.environ["OPENSLOTH_TRAINING_ACTIVE"] = "1"
     # Now install interception (logger will show proper GPU id instead of GPUUNSET)
     # setup_stdout_interception_for_training()
@@ -194,7 +200,7 @@ def train_on_single_gpu(
             logger.info(f"Using Async Parameter-Server backend for GPU {gpu} (rank {rank})")
         else:
             from opensloth.nccl_grad_sync import get_callback_and_setup_method
-            nccl_grad_sync_callback, _ = get_callback_and_setup_method()
+            nccl_grad_sync_callback, _setup_nccl, destroy_nccl = get_callback_and_setup_method()
             grad_sync_cb = nccl_grad_sync_callback(
                 model=trainer.model,
                 gpu=gpu,
@@ -248,6 +254,15 @@ def train_on_single_gpu(
 
         # Log training summary
         logger.log_training_summary()
+
+    # Clean up NCCL process group to avoid resource leak warnings (non async-ps multi-GPU)
+    if len(opensloth_config.devices) > 1 and getattr(opensloth_config, 'comm_backend', 'allreduce') != 'async-ps':
+        try:
+            # destroy_nccl imported above when backend was selected
+            if 'destroy_nccl' in locals():  # type: ignore[truthy-function]
+                destroy_nccl()  # type: ignore[misc]
+        except Exception:
+            pass
 
 
 def load_config_from_path(

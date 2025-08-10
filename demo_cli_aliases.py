@@ -2,17 +2,18 @@
 """
 Demo CLI using the new auto-generator to show the alias functionality.
 """
-import sys
-from pathlib import Path
 import json
+import sys
 import tempfile
+from pathlib import Path
 
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 import typer
-from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
+
 from opensloth.cli.autogen import cli_from_pydantic
+from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
 
 app = typer.Typer(name="demo-cli", help="Demo CLI with auto-generated aliases")
 

@@ -9,8 +9,8 @@ import json
 import os
 import re
 import sys
-from typing import Dict, Any
 from pathlib import Path
+from typing import Any, Dict
 
 # Import from src/opensloth/dataset
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -101,7 +101,7 @@ class GRPODatasetPreparer(BaseDatasetPreparer):
                             fallback_errors.append(e2)
                             try:
                                 dataset = datasets.load_dataset(self.args.dataset_name)["train"]
-                                print(f"[INFO] Loaded default train split")
+                                print("[INFO] Loaded default train split")
                             except Exception as e3:
                                 fallback_errors.append(e3)
                                 raise ValueError("Failed to load dataset: " + ", ".join(str(err) for err in fallback_errors))
@@ -113,7 +113,7 @@ class GRPODatasetPreparer(BaseDatasetPreparer):
                         fallback_errors.append(e2)
                         try:
                             dataset = datasets.load_dataset(self.args.dataset_name)["train"]
-                            print(f"[INFO] Loaded default train split")
+                            print("[INFO] Loaded default train split")
                         except Exception as e3:
                             fallback_errors.append(e3)
                             raise ValueError("Failed to load dataset: " + ", ".join(str(err) for err in fallback_errors))
@@ -143,7 +143,7 @@ class GRPODatasetPreparer(BaseDatasetPreparer):
                 # Direct prompt/solution format (like DAPO-Math)
                 print(f"[INFO] Using direct prompt/{self.args.extract_answer_field} format")
                 
-                for prompt, solution in zip(examples["prompt"], examples[self.args.extract_answer_field]):
+                for prompt, _solution in zip(examples["prompt"], examples[self.args.extract_answer_field], strict=False):
                     # Create a conversation with system prompt and user question
                     conversation = [
                         {"role": "system", "content": self.args.system_prompt},
@@ -175,7 +175,7 @@ class GRPODatasetPreparer(BaseDatasetPreparer):
                     
                     if user_messages:
                         # Add system prompt and format
-                        full_conversation = [{"role": "system", "content": self.args.system_prompt}] + user_messages
+                        full_conversation = [{"role": "system", "content": self.args.system_prompt}, *user_messages]
                         formatted_prompt = self.tokenizer.apply_chat_template(
                             full_conversation, 
                             tokenize=False, 

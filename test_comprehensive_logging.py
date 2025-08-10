@@ -3,6 +3,7 @@
 import os
 import tempfile
 
+
 def test_comprehensive_logging_interception():
     """Test the comprehensive logging interception"""
     
@@ -51,7 +52,7 @@ def test_comprehensive_logging_interception():
     for log_file in log_files:
         print(f"\nContents of {log_file}:")
         try:
-            with open(log_file, 'r') as f:
+            with open(log_file) as f:
                 content = f.read()
                 print(content)
         except Exception as e:

@@ -3,13 +3,8 @@ Comprehensive example showing both SFT and DPO training configurations.
 This script demonstrates the differences and how to use both training types.
 """
 
-from opensloth.opensloth_config import (
-    FastModelArgs, 
-    LoraArgs, 
-    OpenSlothConfig, 
-    TrainingArguments,
-    DPOArgs
-)
+from opensloth.opensloth_config import DPOArgs, FastModelArgs, LoraArgs, OpenSlothConfig, TrainingArguments
+
 
 def create_sft_config():
     """Create configuration for SFT (Supervised Fine-Tuning) training."""

@@ -1,6 +1,6 @@
 import itertools
 import os
-import itertools
+
 
 def _escape_html(text: str) -> str:
     """Escape HTML special characters efficiently."""

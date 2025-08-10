@@ -1,21 +1,21 @@
 """Public programmatic API for OpenSloth."""
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Tuple, TYPE_CHECKING
 import json
-import tempfile
-import textwrap
 import os
 import pprint
-import sys
 import subprocess
+import sys
+import tempfile
+import textwrap
+from pathlib import Path
+from typing import TYPE_CHECKING, Tuple
 
 from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
 from opensloth.scripts.opensloth_trainer import (
     run_mp_training,
-    setup_envs,
     run_tmux_training,
+    setup_envs,
 )
 
 if TYPE_CHECKING:
@@ -95,7 +95,7 @@ def run_training(
     use_tmux: bool = False,
     tmux_session: str | None = None,
     tmux_auto_kill: bool = False,
-) -> Tuple[OpenSlothConfig, TrainingArguments]:
+) -> tuple[OpenSlothConfig, TrainingArguments]:
     setup_envs(opensloth_config, training_args)
     multi_gpu = len(opensloth_config.devices) > 1
 
@@ -109,7 +109,6 @@ def run_training(
         run_tmux_training(
             session_name=session,
             config_file=str(cfg_path),
-            training_config=training_args,
             gpus=opensloth_config.devices,
             auto_kill=tmux_auto_kill,
         )
@@ -123,17 +122,17 @@ def run_training(
     script_content = _generate_training_script(opensloth_config, training_args)
     script_path.write_text(script_content)
 
-    print(f"🚀 Executing generated script...")
+    print("🚀 Executing generated script...")
     # Use sys.executable to ensure the same Python env is used
     process = subprocess.run([sys.executable, str(script_path)], check=True)
     
     if process.returncode == 0:
-        print(f"✅ Training process completed successfully.")
+        print("✅ Training process completed successfully.")
     else:
         print(f"❌ Training process failed with exit code {process.returncode}.")
     return opensloth_config, training_args
 
-def run_prepare_data(config: "DatasetPrepConfig") -> str:
+def run_prepare_data(config: DatasetPrepConfig) -> str:
     """Runs the appropriate dataset preparer based on the config."""
     from opensloth.dataset.config_schema import DatasetPrepConfig
     
@@ -146,7 +145,8 @@ def run_prepare_data(config: "DatasetPrepConfig") -> str:
     
     method = config_dict.get("training_type", "sft")
     if method == "grpo":
-        import importlib.util, pathlib
+        import importlib.util
+        import pathlib
         # prepare_grpo.py lives at repository_root/prepare_dataset/prepare_grpo.py (not inside src/opensloth)
         repo_root = pathlib.Path(__file__).resolve().parents[2]
         prep_path = repo_root / "prepare_dataset" / "prepare_grpo.py"
@@ -155,16 +155,16 @@ def run_prepare_data(config: "DatasetPrepConfig") -> str:
             raise RuntimeError("Could not locate prepare_grpo.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)  # type: ignore
-        preparer = getattr(module, "GRPODatasetPreparer")()
+        preparer = module.GRPODatasetPreparer()
     else:
-        from opensloth.dataset import QwenDatasetPreparer, GemmaDatasetPreparer  # type: ignore
+        from opensloth.dataset import GemmaDatasetPreparer, QwenDatasetPreparer  # type: ignore
         model_name = config_dict.get("tok_name", "").lower()
         preparer = GemmaDatasetPreparer() if "gemma" in model_name else QwenDatasetPreparer()
     
     output_dir = preparer.run_with_config(config_dict)
     return output_dir
 
-__all__ = ["run_training", "run_prepare_data"]
+__all__ = ["run_prepare_data", "run_training"]
 
 # Export DatasetPrepConfig for convenience
 def __getattr__(name):

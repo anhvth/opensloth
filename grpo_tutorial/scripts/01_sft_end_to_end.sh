@@ -44,8 +44,8 @@ SFT_SAMPLES=${SFT_SAMPLES:-4000}
 mkdir -p outputs/sft_qwen_reasoning_model
 
 echo "🔄 Running os-train sft (end-to-end: data prep + training)..."
-os-train sft grpo_tutorial/data/sft_openmath_raw.jsonl \
-    --model "Qwen/Qwen2.5-3B-Instruct" \
+    os-train sft grpo_tutorial/data/sft_openmath_raw.jsonl \
+    --model "hf-models/unsloth/Qwen3-0.6B-bnb-4bit/" \
     --output outputs/sft_qwen_reasoning_model \
     --samples ${SFT_SAMPLES} \
     --gpus ${GPU_COUNT} \
@@ -71,7 +71,7 @@ fi
 echo "✅ End-to-end SFT training completed successfully!"
 echo ""
 echo "📊 Training Summary:"
-echo "  - Model: Qwen/Qwen2.5-3B-Instruct"
+echo "  - Model: hf-models/unsloth/Qwen3-0.6B-bnb-4bit/"
 echo "  - Training type: Supervised Fine-Tuning (SFT)"
 echo "  - Purpose: Learning reasoning format"
 echo "  - Dataset samples: ${SFT_SAMPLES}"

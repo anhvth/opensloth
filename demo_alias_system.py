@@ -2,8 +2,8 @@
 """
 Simple test to demonstrate CLI aliases working.
 """
-import sys
 import json
+import sys
 import tempfile
 from pathlib import Path
 
@@ -57,7 +57,7 @@ def test_manual_alias_usage():
         # Verify the configuration
         assert opensloth_cfg.fast_model_args.model_name == "unsloth/new-model"
         assert opensloth_cfg.fast_model_args.max_seq_length == 4096
-        assert opensloth_cfg.fast_model_args.load_in_4bit == False
+        assert not opensloth_cfg.fast_model_args.load_in_4bit
         assert opensloth_cfg.lora_args.r == 32
         assert opensloth_cfg.lora_args.lora_alpha == 64
         assert train_args.learning_rate == 1e-4

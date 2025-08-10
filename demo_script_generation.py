@@ -6,9 +6,9 @@ for robustness and reusability.
 """
 
 import os
+import shutil
 import sys
 import tempfile
-import shutil
 from pathlib import Path
 
 # Add the src directory to Python path
@@ -21,7 +21,7 @@ def demonstrate_script_generation():
     print("=" * 50)
     
     from opensloth.api import _generate_training_script
-    from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments, FastModelArgs
+    from opensloth.opensloth_config import FastModelArgs, OpenSlothConfig, TrainingArguments
     
     # Create sample configuration
     opensloth_config = OpenSlothConfig(
@@ -75,7 +75,8 @@ def demonstrate_pprint_formatting():
     print("=" * 50)
     
     import pprint
-    from opensloth.opensloth_config import OpenSlothConfig, FastModelArgs
+
+    from opensloth.opensloth_config import FastModelArgs, OpenSlothConfig
     
     # Create a sample config
     config = OpenSlothConfig(

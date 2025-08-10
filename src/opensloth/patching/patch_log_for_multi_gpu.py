@@ -1,11 +1,12 @@
 import os
 import time
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
 import numpy as np
 from fastcore.all import patch
 from filelock import BaseFileLock, FileLock
 from transformers.trainer_utils import speed_metrics
+
 from opensloth.logging_config import get_opensloth_logger
 
 TIME_OUT = 300
@@ -18,7 +19,7 @@ logger = get_opensloth_logger()
 # SMART AGGREGATION STRATEGIES
 # =====================================================================================
 # Mapping of metric names to their aggregation strategy
-AGGREGATION_STRATEGIES: Dict[str, str] = {
+AGGREGATION_STRATEGIES: dict[str, str] = {
     # === Metrics that should be AVERAGED across GPUs ===
     # Loss metrics (mean is the most meaningful for loss)
     "loss": "mean",
@@ -249,9 +250,8 @@ def patch_log_for_multi_gpu(trainer):
         # Filter for numeric values that can be aggregated
         numeric_keys_to_sync: list[str] = []
         for k, v in list(logs.items()):
-            if isinstance(v, (int, float)):
-                if not (isinstance(v, float) and (np.isnan(v) or np.isinf(v))):
-                    numeric_keys_to_sync.append(k)
+            if isinstance(v, int | float) and not (isinstance(v, float) and (np.isnan(v) or np.isinf(v))):
+                numeric_keys_to_sync.append(k)
 
         if numeric_keys_to_sync:
             try:
@@ -290,12 +290,11 @@ def patch_log_for_multi_gpu(trainer):
                 self.control = self.callback_handler.on_log(
                     self.args, self.state, self.control, logs
                 )
-        else:
-            # No numeric metrics to sync, use standard single-GPU logging
-            if is_main:
-                self.control = self.callback_handler.on_log(
-                    self.args, self.state, self.control, logs
-                )
+        # No numeric metrics to sync, use standard single-GPU logging
+        elif is_main:
+            self.control = self.callback_handler.on_log(
+                self.args, self.state, self.control, logs
+            )
         # === OPENSLOTH DYNAMIC PATCH END ===
 
     return trainer
@@ -310,7 +309,7 @@ def _wait_for_directory(cache_dir: str, rank: int) -> None:
 
 
 def _initialize_mmaps_dynamically(
-    numeric_keys: List[str],
+    numeric_keys: list[str],
     cache_dir: str,
     world_size: int,
     rank: int,
@@ -422,9 +421,7 @@ def _aggregate_logs(
         strategy = AGGREGATION_STRATEGIES.get(key, DEFAULT_AGGREGATION)
         
         # Handle dynamic reward function keys (e.g., "rewards/custom_reward/mean")
-        if strategy == DEFAULT_AGGREGATION and key.startswith("rewards/") and "/mean" in key:
-            strategy = "mean"
-        elif strategy == DEFAULT_AGGREGATION and key.startswith("rewards/") and "/std" in key:
+        if (strategy == DEFAULT_AGGREGATION and key.startswith("rewards/") and "/mean" in key) or (strategy == DEFAULT_AGGREGATION and key.startswith("rewards/") and "/std" in key):
             strategy = "mean"
 
         # Apply the aggregation strategy

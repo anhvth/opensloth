@@ -26,12 +26,12 @@ import time
 from typing import List, Optional
 
 import torch
-import torch.distributed.rpc as rpc
 from torch import nn
+from torch.distributed import rpc
 from transformers import TrainerCallback, TrainerControl, TrainerState, TrainingArguments
 
-from opensloth.opensloth_config import AsyncPSConfig
 from opensloth.logging_config import get_opensloth_logger
+from opensloth.opensloth_config import AsyncPSConfig
 
 logger = get_opensloth_logger()
 
@@ -39,7 +39,7 @@ logger = get_opensloth_logger()
 
 class ParameterServer:
     """Holds master copy of trainable parameter vector and applies updates."""
-    def __init__(self, param_shapes: List[torch.Size], lr: float):
+    def __init__(self, param_shapes: list[torch.Size], lr: float):
         self.param_shapes = param_shapes
         self.lr = lr
         self.lock = threading.Lock()
@@ -124,17 +124,17 @@ class AsyncPSCallback(TrainerCallback):
         self.rank = rank
         self.world_size = world_size
         self.cfg = config
-        self.param_refs: List[nn.Parameter] = [p for p in model.parameters() if p.requires_grad]
+        self.param_refs: list[nn.Parameter] = [p for p in model.parameters() if p.requires_grad]
         self.shapes = [p.shape for p in self.param_refs]
         self.numel_cumsum = self._compute_cumsum(self.shapes)
         self.local_version = 0
         self.last_pull_version = 0
-        self.inflight: List[torch.futures.Future] = []
+        self.inflight: list[torch.futures.Future] = []
         # Optionally zero out local optimizer LR via Trainer hook later
         logger.info(f"[AsyncPS] Callback initialized on rank {rank} with {len(self.param_refs)} trainable params")
 
     @staticmethod
-    def _compute_cumsum(shapes: List[torch.Size]) -> List[int]:
+    def _compute_cumsum(shapes: list[torch.Size]) -> list[int]:
         cumsum = [0]
         total = 0
         for s in shapes:
@@ -145,7 +145,7 @@ class AsyncPSCallback(TrainerCallback):
             cumsum.append(total)
         return cumsum
 
-    def _flatten_grads(self) -> Optional[torch.Tensor]:
+    def _flatten_grads(self) -> torch.Tensor | None:
         grads = []
         for p in self.param_refs:
             if p.grad is None:
@@ -207,7 +207,7 @@ class AsyncPSCallback(TrainerCallback):
 # These top-level functions are required because functions passed to rpc.{rpc_async,rpc_sync}
 # must be picklable; bound instance methods would require RRef-based indirection.
 
-_SERVER_INSTANCE: Optional[ParameterServer] = None
+_SERVER_INSTANCE: ParameterServer | None = None
 
 
 def _ensure_server_instance() -> ParameterServer:
@@ -227,15 +227,14 @@ def _ps_apply_grads(flat_grads: torch.Tensor, worker_version: int, worker_rank: 
 
 def initialize_server_if_rank0(model: nn.Module, rank: int, async_cfg: AsyncPSConfig):
     global _SERVER_INSTANCE
-    if rank == 0:
-        if _SERVER_INSTANCE is None:
-            param_shapes = [p.shape for p in model.parameters() if p.requires_grad]
-            _SERVER_INSTANCE = ParameterServer(param_shapes, async_cfg.server_lr)
-            logger.info("[AsyncPS] In-process ParameterServer instantiated on rank 0")
+    if rank == 0 and _SERVER_INSTANCE is None:
+        param_shapes = [p.shape for p in model.parameters() if p.requires_grad]
+        _SERVER_INSTANCE = ParameterServer(param_shapes, async_cfg.server_lr)
+        logger.info("[AsyncPS] In-process ParameterServer instantiated on rank 0")
 
 __all__ = [
-    "setup_rpc",
-    "shutdown_rpc",
     "AsyncPSCallback",
     "initialize_server_if_rank0",
+    "setup_rpc",
+    "shutdown_rpc",
 ]

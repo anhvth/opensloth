@@ -26,12 +26,25 @@ fi
 echo "📊 Step 1: Verifying SFT model..."
 echo "✅ SFT model found at outputs/sft_qwen_reasoning_model"
 
+# Extract base model path from adapter config
+BASE_MODEL=$(python -c "import json; config = json.load(open('outputs/sft_qwen_reasoning_model/adapter_config.json')); print(config['base_model_name_or_path'])")
+echo "🔍 Detected base model: $BASE_MODEL"
+
+# Verify base model exists
+if [ ! -d "$BASE_MODEL" ]; then
+    echo "❌ Error: Base model not found at $BASE_MODEL"
+    echo "Please ensure the base model is available"
+    exit 1
+fi
+
 # Step 2: Run end-to-end GRPO training with os-train
 echo "🎯 Step 2: Starting end-to-end GRPO training..."
 echo "Goal: Improving mathematical reasoning quality using preference optimization"
 
 # Detect GPU count
-GPU_COUNT=${GPU_COUNT:-$(python -c 'import torch,os;print(torch.cuda.device_count() if torch.cuda.is_available() else 1)')}
+if [ -z "$GPU_COUNT" ]; then
+    GPU_COUNT=$(python -c 'import torch,os;print(torch.cuda.device_count() if torch.cuda.is_available() else 1)')
+fi
 echo "🔍 Detected GPUs: $GPU_COUNT"
 
 # Set sample count for tutorial (can be overridden)
@@ -42,7 +55,9 @@ mkdir -p outputs/grpo_final_model
 
 echo "🔄 Running os-train grpo (end-to-end: data prep + training)..."
 echo "📥 Dataset: open-r1/DAPO-Math-17k-Processed (HuggingFace)"
-echo "🔗 Using SFT model as starting point for preference optimization"
+echo "🔗 Using base model: $BASE_MODEL"
+echo "🧩 Loading pretrained LoRA from: outputs/sft_qwen_reasoning_model"
+echo "🚀 This enables vLLM fast inference for GRPO training"
 
 # Use tmux for multi-GPU if more than 1 GPU is available
 TMUX_FLAG=""
@@ -51,16 +66,17 @@ if [ "$GPU_COUNT" -gt 1 ]; then
     echo "🖥️  Multi-GPU detected: Using tmux for training"
 fi
 
-# Run os-train grpo with the SFT model as the base
+# Run os-train grpo with separated base model and pretrained LoRA
 os-train grpo open-r1/DAPO-Math-17k-Processed \
-    --model "outputs/sft_qwen_reasoning_model" \
+    --model "$BASE_MODEL" \
+    --pretrained-lora "outputs/sft_qwen_reasoning_model" \
     --output outputs/grpo_final_model \
     --samples ${GRPO_SAMPLES} \
     --gpus ${GPU_COUNT} \
     --max-seq-length 4096 \
     --epochs 1 \
     --batch-size 64 \
-    --lr 5e-5 
+    --lr 5e-5 \
     ${TMUX_FLAG}
 
 # Verify the training completed successfully
@@ -80,7 +96,8 @@ fi
 echo "🎉 End-to-end GRPO training completed successfully!"
 echo ""
 echo "📊 Training Summary:"
-echo "  - Base model: outputs/sft_qwen_reasoning_model (SFT checkpoint)"
+echo "  - Base model: $BASE_MODEL"
+echo "  - Pretrained LoRA: outputs/sft_qwen_reasoning_model"
 echo "  - Training type: Group Relative Policy Optimization (GRPO)"
 echo "  - Purpose: Improving mathematical reasoning accuracy"
 echo "  - Dataset: open-r1/DAPO-Math-17k-Processed"
@@ -88,6 +105,7 @@ echo "  - Dataset samples: ${GRPO_SAMPLES}"
 echo "  - Epochs: 1"
 echo "  - GPUs: ${GPU_COUNT}"
 echo "  - Output: outputs/grpo_final_model/"
+echo "  - vLLM enabled: ✅ (for fast inference during training)"
 echo ""
 echo "🎯 What the model learned:"
 echo "  - Improved mathematical reasoning accuracy"

@@ -7,12 +7,14 @@ Hugging Face, applying custom formatting for math reasoning, and saving
 it as a local JSONL file that os-data can process.
 """
 
-import pandas as pd
-import numpy as np
-from datasets import load_dataset
 import json
 import os
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
+from datasets import load_dataset
+
 
 def main():
     """
@@ -95,7 +97,7 @@ def main():
                 f.write(json.dumps(item, ensure_ascii=False) + '\n')
         
         print(f"✅ Successfully saved {len(formatted_data)} formatted examples to {output_file}")
-        print(f"📊 Dataset statistics:")
+        print("📊 Dataset statistics:")
         print(f"   - Total examples: {len(formatted_data)}")
         print(f"   - Average problem length: {np.mean([len(item['conversations'][1]['content']) for item in formatted_data]):.1f} chars")
         print(f"   - Average response length: {np.mean([len(item['conversations'][2]['content']) for item in formatted_data]):.1f} chars")

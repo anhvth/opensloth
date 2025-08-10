@@ -1,6 +1,7 @@
 """Pydantic schemas for dataset preparation and training UI."""
 
 from typing import Literal, Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -25,7 +26,7 @@ class DatasetPrepConfig(BaseModel):
 	num_samples: int = Field(default=-1, description="Number of samples to process (-1 for all)", json_schema_extra={'cli_alias': 'samples'})
 	num_proc: int = Field(default=8, description="Workers for dataset map/tokenization", json_schema_extra={'cli_alias': 'workers'})
 	gpus: int = Field(default=1, description="Number of GPU shards to create for the dataset.")
-	output_dir: Optional[str] = Field(default=None, description="Output directory for processed data.", json_schema_extra={'cli_alias': 'data-output'})
+	output_dir: str | None = Field(default=None, description="Output directory for processed data.", json_schema_extra={'cli_alias': 'data-output'})
 
 	# Labeling
 	train_on_target_only: bool = Field(
@@ -44,7 +45,7 @@ class DatasetPrepConfig(BaseModel):
 	debug: int = Field(default=0, description="If >0, enable debug mode and dump samples")
 
 	# Authentication
-	hf_token: Optional[str] = Field(default=None, description="Hugging Face token for accessing gated models/datasets")
+	hf_token: str | None = Field(default=None, description="Hugging Face token for accessing gated models/datasets")
 
 	class Config:
 		extra = "allow"

@@ -8,17 +8,17 @@ import argparse
 import os
 import sys
 
+
 def main():
     # Setup comprehensive logging interception
     from opensloth.logging_config import setup_huggingface_logging_interception, setup_stdout_interception_for_training
     setup_huggingface_logging_interception()
     
     # Set training active flag for stdout interception
-    import os
     os.environ["OPENSLOTH_TRAINING_ACTIVE"] = "1"
     setup_stdout_interception_for_training()
     
-    import argparse
+
     from opensloth.scripts.opensloth_trainer import load_config_from_path, train_on_single_gpu
 
     parser = argparse.ArgumentParser(description="Train worker for tmux mode")

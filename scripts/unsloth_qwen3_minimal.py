@@ -1,12 +1,14 @@
 import os
+
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 # os.environ['TORCHDYNAMO_DISABLE'] = '1'
 #====
-import unsloth # unsloth must be import before trl
-from unsloth import FastModel
-from trl import SFTConfig, SFTTrainer
 import pandas as pd
-from datasets import load_dataset, Dataset
+import unsloth  # unsloth must be import before trl
+from datasets import Dataset, load_dataset
+from trl import SFTConfig, SFTTrainer
+from unsloth import FastModel
+
 print("Unsloth version:", unsloth.__version__)
 
 model, tokenizer = FastModel.from_pretrained(

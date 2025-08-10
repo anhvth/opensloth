@@ -70,38 +70,51 @@ build-backend = "poetry.core.masonry.api"
 name = "opensloth"
 packages = [{ include = "opensloth", from = "src" }]
 
-
-[tool.ruff]
-line-length = 120
-exclude = [
-    "__pycache__",
-    "build",
-    "dist",
-    "unsloth_compiled_cache",
-    "outputs",
-    "trainer_output",
-    "sparse_logs",
-    "*.ipynb",
-    "tests/",
-]
-target-version = "py311"
-
 [tool.ruff.lint]
-ignore = [
-    "E501",  # line too long (handled by line-length)
-    "E203",  # whitespace before ':' (black compatibility)
-    "W291",  # trailing whitespace
-    "W293",  # blank line contains whitespace
-    "F403",  # 'from module import *' used; unable to detect undefined names
-    "F405",  # name may be undefined, or defined from star imports
-    "PLC0415",  # import should be at the top-level of a file (deliberate in this project)
-    "PLR0913", # Too many arguments (function has 4 positional arguments, but 3 are allowed)
-    "F401",
-]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "TID", "ARG", "PL", "RUF"]
 
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
-skip-magic-trailing-comma = false
-line-ending = "lf"
+ignore = [
+    # existing
+    "E501",  # line too long (handled by line-length)
+    "E203",  # whitespace before ':' (black compat)
+    "W291",  # trailing whitespace
+    "W293",  # blank line contains whitespace
+    "F403",  # star import
+    "F405",  # star import names
+    "PLC0415",  # non-top-level import (intentional)
+    "PLR0913",  # too many args
+    "F401",     # unused import
+
+    # added to reduce noise for this codebase
+    "PLR2004",  # magic value used in comparison
+    "B008",     # Typer: function call in default (Argument/Option)
+    "UP035",    # prefer builtin generics over typing.* (legacy compat)
+    "B904",     # 'raise from' suggestion
+    "SIM108",   # prefer ternary
+    "SIM102",   # combine nested ifs
+    "PLR0912",  # too many branches
+    "PLR0915",  # too many statements
+    "E721",     # type comparisons with '=='
+    "ARG001",   # unused function argument (framework hooks)
+    "ARG002",   # unused method argument (framework hooks)
+    "PLW0602",  # global but no assignment
+    "PLW0603",  # update global discouraged
+    "B027",     # empty method in ABC without @abstractmethod
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Demo/tests: allow magic numbers & simple style nits
+"demo_*.py" = ["PLR2004", "SIM108"]
+"tests/**" = ["PLR2004", "SIM108", "ARG001", "ARG002"]
+
+# CLI entrypoints: Typer patterns & complexity
+"src/opensloth/cli/*.py" = ["B008", "E721", "PLR0912", "PLR0915", "PLR2004"]
+
+# Patching layers: often long/branchy by design
+"src/opensloth/patching/*.py" = ["PLR0912", "PLR0915", "SIM102", "PLR2004"]
+
+# Distributed comm layer: globals and hook signatures are intentional
+"src/opensloth/comm/*.py" = ["PLW0602", "PLW0603", "ARG002"]
+
+# Dataset prep: permit a few magic-number comparisons & simple style nits
+"src/opensloth/dataset/*.py" = ["PLR2004", "SIM102"]

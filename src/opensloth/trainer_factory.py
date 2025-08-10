@@ -1,64 +1,35 @@
-"""
-Trainer factory and setup utilities for creating trainers (SFT, DPO, GRPO, etc.)
-based on `OpenSlothConfig.training_type`.
-"""
+"""Trainer factory utilities for creating trainers (SFT, DPO, GRPO, etc.)."""
+# ruff: noqa: I001
 
-from typing import Dict, Tuple, Optional
+from __future__ import annotations
 import os
 
+
+from collections.abc import Iterable
 from .logging_config import get_opensloth_logger
 from .opensloth_config import OpenSlothConfig, TrainingArguments
 
 
-# --------------------------- Dataset validation helpers ---------------------------
+# --------------------------- Helpers ---------------------------
 
-def _ensure_data_correct_for_training_type(train_dataset, training_type: str) -> None:
-    """
-    Ensure the dataset is correctly formatted for the specified training type.
-    Raises an error if the dataset is not in the expected format.
-    """
+def _ensure_data_correct_for_training_type(dataset, training_type: str) -> None:
     logger = get_opensloth_logger()
-
     if training_type == "sft":
-        # SFT requires input_ids and optionally labels
-        if (
-            not hasattr(train_dataset, "features")
-            or "input_ids" not in train_dataset.features
-        ):
-            raise ValueError(
-                "Dataset must have 'input_ids' feature for SFT training. "
-                "Please check your dataset preparation."
-            )
-        if "labels" not in getattr(train_dataset, "features", {}):
-            logger.warning(
-                "Dataset does not have 'labels' feature. "
-                "This may affect SFT training. Please check your dataset preparation."
-            )
-
+        feats = getattr(dataset, "features", None)
+        if feats is None or "input_ids" not in feats:
+            raise ValueError("SFT dataset must contain 'input_ids'.")
+        if "labels" not in feats:
+            logger.warning("SFT dataset missing 'labels' column (may be OK if trainer builds it).")
     elif training_type == "dpo":
-        # DPO requires specific columns: prompt, chosen, rejected
-        required_features = ["prompt", "chosen", "rejected"]
-        if not hasattr(train_dataset, "features"):
-            raise ValueError(
-                "Dataset must have features for DPO training. "
-                f"Required features: {required_features}"
-            )
-
-        missing = [f for f in required_features if f not in train_dataset.features]
+        required = ["prompt", "chosen", "rejected"]
+        feats = getattr(dataset, "features", None)
+        if feats is None:
+            raise ValueError("DPO dataset must expose features.")
+        missing = [c for c in required if c not in feats]
         if missing:
-            available = list(getattr(train_dataset, "features", {}).keys())
-            raise ValueError(
-                "Dataset missing required features for DPO training: "
-                f"{missing}. Please ensure your dataset has columns: {required_features}. "
-                f"Available features: {available}"
-            )
-
-        logger.info("DPO dataset validation passed.")
-
+            raise ValueError(f"DPO dataset missing required columns {missing}; has {list(feats.keys())}")
     else:
-        raise NotImplementedError(
-            f"Dataset validation for training type '{training_type}' is not implemented."
-        )
+        raise NotImplementedError(f"Validation for training_type={training_type} not implemented")
 
 
 # --------------------------- Trainer constructors ---------------------------
@@ -67,287 +38,338 @@ def _create_sft_trainer(
     model,
     tokenizer,
     train_dataset,
-    opensloth_config: OpenSlothConfig,
+    _cfg: OpenSlothConfig,  # kept for uniform signature
     hf_train_args: TrainingArguments,
 ):
-    """Create an SFTTrainer instance."""
     from transformers import DataCollatorForSeq2Seq
     from trl import SFTTrainer
 
-    logger = get_opensloth_logger()
     _ensure_data_correct_for_training_type(train_dataset, "sft")
-
     data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer)
-    # Some stacks add this flag; harmless if unused.
-    setattr(hf_train_args, "skip_prepare_dataset", True)
-
-    trainer = SFTTrainer(
+    hf_train_args.skip_prepare_dataset = True  # type: ignore[attr-defined]
+    return SFTTrainer(
         model=model,
         train_dataset=train_dataset,
-        args=hf_train_args,          # type: ignore
-        tokenizer=tokenizer,         # type: ignore
+        args=hf_train_args,          # type: ignore[arg-type]
+        tokenizer=tokenizer,         # type: ignore[arg-type]
         data_collator=data_collator,
     )
-
-    logger.info("SFTTrainer setup completed successfully.")
-    return trainer
 
 
 def _create_dpo_trainer(
     model,
     tokenizer,
     train_dataset,
-    opensloth_config: OpenSlothConfig,
+    cfg: OpenSlothConfig,
     hf_train_args: TrainingArguments,
 ):
-    """Create a DPOTrainer instance."""
-    logger = get_opensloth_logger()
-
-    # Ensure PatchDPOTrainer is called (Unsloth compatibility)
-    try:
-        from unsloth import PatchDPOTrainer
-        PatchDPOTrainer()
-        logger.info("Applied PatchDPOTrainer for Unsloth compatibility.")
-    except ImportError as e:
-        logger.error(f"Failed to import PatchDPOTrainer from unsloth: {e}")
-        raise ImportError(
-            "PatchDPOTrainer is required for DPO training with Unsloth. "
-            "Please ensure you have the latest version of 'unsloth' installed."
-        )
-    except Exception as e:
-        logger.warning(f"PatchDPOTrainer call failed: {e}. Continuing...")
-
-    try:
-        from trl import DPOTrainer, DPOConfig
-    except ImportError as e:
-        raise ImportError(
-            f"Failed to import DPO components from 'trl': {e}. "
-            "Please ensure you have TRL installed with DPO support."
-        )
+    from trl import DPOTrainer, DPOConfig
 
     _ensure_data_correct_for_training_type(train_dataset, "dpo")
-
-    dpo_args = opensloth_config.dpo_args
+    dpo_args = cfg.dpo_args
     if dpo_args is None:
-        raise ValueError("`dpo_args` must be configured for DPO training.")
-
-    # Merge HF TrainingArguments with DPO-specific settings
-    dpo_config_dict = hf_train_args.to_dict()
-    dpo_config_dict.update(
+        raise ValueError("dpo_args must be provided for DPO training")
+    d = hf_train_args.to_dict()
+    d.update(
         {
             "beta": dpo_args.beta,
             "max_length": dpo_args.max_length,
             "max_prompt_length": dpo_args.max_prompt_length,
         }
     )
-    dpo_config = DPOConfig(**dpo_config_dict)
-
-    trainer = DPOTrainer(
+    dpo_config = DPOConfig(**d)
+    return DPOTrainer(
         model=model,
-        ref_model=None,  # Let DPO create the reference model automatically
         args=dpo_config,
         train_dataset=train_dataset,
         tokenizer=tokenizer,
-        beta=dpo_args.beta,
-        max_length=dpo_args.max_length,
-        max_prompt_length=dpo_args.max_prompt_length,
     )
 
-    logger.info("DPOTrainer setup completed successfully.")
-    return trainer
+
+def _create_kto_trainer(model, tokenizer, train_dataset, _cfg: OpenSlothConfig, _args: TrainingArguments):
+    raise NotImplementedError("KTO training not implemented yet")
 
 
-def _create_kto_trainer(
-    model,
-    tokenizer,
-    train_dataset,
-    opensloth_config: OpenSlothConfig,
-    hf_train_args: TrainingArguments,
-):
-    """Create a KTOTrainer instance."""
-    raise NotImplementedError("KTO training is not yet implemented.")
+def _create_orpo_trainer(model, tokenizer, train_dataset, _cfg: OpenSlothConfig, _args: TrainingArguments):
+    raise NotImplementedError("ORPO training not implemented yet")
 
 
-def _create_orpo_trainer(
-    model,
-    tokenizer,
-    train_dataset,
-    opensloth_config: OpenSlothConfig,
-    hf_train_args: TrainingArguments,
-):
-    """Create an ORPOTrainer instance."""
-    raise NotImplementedError("ORPO training is not yet implemented.")
+# ---- GRPO ----
+
+def _validate_grpo_dataset(ds) -> Iterable[str]:
+    feats = getattr(ds, "features", None)
+    if feats is None:
+        raise ValueError("GRPO dataset must have features")
+    keys = list(feats.keys())
+    if "prompt" not in keys and "input_ids" not in keys:
+        raise ValueError(f"GRPO dataset must have 'prompt' or 'input_ids'; has {keys}")
+    return keys
 
 
 def _create_grpo_trainer(
     model,
     tokenizer,
     train_dataset,
-    opensloth_config: OpenSlothConfig,
+    cfg: OpenSlothConfig,
     hf_train_args: TrainingArguments,
 ):
-    """Create a GRPO trainer instance using TRL's native GRPOTrainer."""
-    logger = get_opensloth_logger()
-    grpo_args = opensloth_config.grpo_args
+    grpo_args = cfg.grpo_args
     if grpo_args is None:
-        raise ValueError("`grpo_args` must be set for GRPO training.")
+        raise ValueError("grpo_args must be provided for GRPO training")
 
-    # Import TRL's GRPO components
-    try:
-        from trl import GRPOTrainer, GRPOConfig
-    except ImportError as e:
-        raise ImportError(
-            f"Failed to import GRPO components from 'trl': {e}. "
-            "Please ensure you have TRL installed with GRPO support."
-        )
-
-    # Import reward helpers (best effort)
+    from trl import GRPOTrainer, GRPOConfig
     try:
         from .grpo_rewards import (
             get_reward_functions,
             create_reward_preset,
-            get_chat_template_for_task,  # imported for side-effects / parity
         )
-        logger.info("GRPO reward functions loaded.")
-    except Exception as e:
-        logger.warning(f"Failed to import GRPO reward functions: {e}")
-
-        def _dummy_reward(*args, **kwargs):
-            # Return a list of zeros per completion
-            if len(args) > 1 and isinstance(args[1], (list, tuple)):
+    except Exception:
+        # Fallback dummy reward
+        def _dummy_reward(*args, **_kw):
+            if len(args) > 1 and isinstance(args[1], list | tuple):
                 return [0.0] * len(args[1])
             return [0.0]
 
-        def get_reward_functions(_names):
+        def get_reward_functions(_names):  # type: ignore
             class _RF:
                 name = "dummy"
-
-                def __call__(self, prompts, completions, **_kw):
+                def __call__(self, prompts, completions, **_):
                     return _dummy_reward(prompts, completions)
-
             return [_RF()]
 
-        def create_reward_preset(_task_type):
+        def create_reward_preset(_task_type):  # type: ignore
             return ["dummy"]
 
-    # Build GRPOConfig by starting with base TrainingArguments and overriding with GRPO specifics.
-    # This is a cleaner "whitelist" approach that avoids a brittle blacklist of unsupported args.
-    grpo_config_dict = hf_train_args.to_dict()
-    
-    # Remove the few parameters that GRPOConfig doesn't support
-    # Based on analysis, only these parameters need to be excluded:
-    unsupported_by_grpo = {"dataset_num_proc"}
-    for param in unsupported_by_grpo:
-        grpo_config_dict.pop(param, None)
+    _validate_grpo_dataset(train_dataset)
 
-    # Map our args -> GRPOConfig parameter names
-    grpo_config_dict.update(
+    cfg_dict = hf_train_args.to_dict()
+    cfg_dict.pop("dataset_num_proc", None)
+    cfg_dict.update(
         {
             "num_generations": grpo_args.group_size,
             "max_completion_length": grpo_args.max_new_tokens,
             "temperature": grpo_args.temperature,
             "top_p": grpo_args.top_p,
-            "beta": grpo_args.kl_coef,  # GRPO uses 'beta' for KL weight
+            "beta": grpo_args.kl_coef,
             "max_prompt_length": grpo_args.max_prompt_length,
         }
     )
     if grpo_args.top_k is not None:
-        grpo_config_dict["top_k"] = grpo_args.top_k
+        cfg_dict["top_k"] = grpo_args.top_k
 
-    # Configure vLLM and generation parameters
-    try:
-        stop_sequences = list(grpo_args.stop_sequences)
-        if tokenizer.eos_token and tokenizer.eos_token not in stop_sequences:
-            stop_sequences.append(tokenizer.eos_token)
+    stop_sequences = list(grpo_args.stop_sequences)
+    eos = getattr(tokenizer, "eos_token", None)
+    if eos and eos not in stop_sequences:
+        stop_sequences.append(eos)
+    generation_kwargs = {"do_sample": True, "pad_token_id": eos}
+    if stop_sequences:
+        generation_kwargs["stop_strings"] = stop_sequences
+    if grpo_args.min_p is not None:
+        cfg_dict["min_p"] = grpo_args.min_p
+    cfg_dict["generation_kwargs"] = generation_kwargs
 
-        # Configure vLLM-specific parameters that are directly supported by GRPOConfig
-        if grpo_args.min_p is not None:
-            grpo_config_dict["min_p"] = grpo_args.min_p
-        
-        # Configure generation parameters through generation_kwargs
-        generation_kwargs = {
-            "do_sample": True,  # Required for GRPO sampling
-            "pad_token_id": tokenizer.eos_token if hasattr(tokenizer, 'eos_token') else None,
-        }
-        
-        # Add stop sequences if any
-        if stop_sequences:
-            generation_kwargs["stop_strings"] = stop_sequences
-        
-        grpo_config_dict["generation_kwargs"] = generation_kwargs
-        
-        logger.info(f"Configured generation parameters for GRPO: {generation_kwargs}")
-        
-    except Exception as e:
-        logger.warning(f"Could not configure generation parameters: {e}. Training will proceed with defaults.")
+    grpo_config = GRPOConfig(**cfg_dict)
 
-    try:
-        # Instantiate GRPOConfig. If an argument is invalid, it will raise a TypeError,
-        # which is a clear and immediate signal of a configuration issue.
-        grpo_config = GRPOConfig(**grpo_config_dict)
-    except TypeError as e:
-        logger.error(
-            "Failed to create GRPOConfig. This might be due to an argument in "
-            f"your TrainingArguments that is incompatible with trl.GRPOConfig. Error: {e}"
-        )
-        logger.error(f"Attempted to create GRPOConfig with keys: {list(grpo_config_dict.keys())}")
-        raise ValueError(f"GRPOConfig creation failed: {e}")
-
-    # Validate dataset format
-    if not hasattr(train_dataset, "features"):
-        raise ValueError("Dataset must have features for GRPO training.")
-
-    available_features = list(train_dataset.features.keys())
-    logger.info(f"GRPO dataset features: {available_features}")
-
-    if "prompt" not in available_features and "input_ids" not in available_features:
-        raise ValueError(
-            "GRPO dataset must have either 'prompt' or 'input_ids' column. "
-            f"Available features: {available_features}"
-        )
-
-    # Setup reward functions
     reward_names = grpo_args.reward_functions or create_reward_preset(grpo_args.task_type)
-    # Persist resolved names for downstream serialization (e.g., auto-generated train.py)
     if not grpo_args.reward_functions:
-        try:
-            grpo_args.reward_functions = list(reward_names)  # type: ignore
-        except Exception:
-            pass
-    reward_functions = get_reward_functions(reward_names)
-    logger.info(f"Using reward functions: {[getattr(rf, 'name', repr(rf)) for rf in reward_functions]}")
+        grpo_args.reward_functions = list(reward_names)  # type: ignore
+    reward_fns = get_reward_functions(reward_names)
 
-    def _wrap_reward(rf):
-        def trl_reward(prompts, completions, **kwargs):
-            return rf(prompts, completions, **kwargs)
-        return trl_reward
+    def _wrap(rf):
+        def inner(prompts, completions, **kw):
+            return rf(prompts, completions, **kw)
+        return inner
 
-    reward_funcs = [_wrap_reward(rf) for rf in reward_functions]
-
-    # Create trainer; handle TRL/Unsloth signature differences
+    reward_funcs = [_wrap(r) for r in reward_fns]
     try:
-        trainer = GRPOTrainer(
+        return GRPOTrainer(
             model=model,
             args=grpo_config,
             train_dataset=train_dataset,
             processing_class=tokenizer,
             reward_funcs=reward_funcs,
         )
-        logger.info("GRPOTrainer setup completed successfully with reward_funcs.")
-    except TypeError as e:
-        if "reward_funcs" in str(e):
-            # Fallback to standard TRL GRPOTrainer without reward_funcs
-            trainer = GRPOTrainer(
+    except TypeError as exc:
+        if "reward_funcs" in str(exc):
+            return GRPOTrainer(
                 model=model,
                 args=grpo_config,
                 train_dataset=train_dataset,
                 processing_class=tokenizer,
             )
-            logger.info("Standard TRL GRPOTrainer setup completed successfully.")
-        else:
-            raise
+        raise
 
+
+# --------------------------- Factory dispatcher ---------------------------
+
+def _create_trainer_by_type(model, tokenizer, train_dataset, cfg: OpenSlothConfig, hf_train_args: TrainingArguments):
+    factories = {
+        "sft": _create_sft_trainer,
+        "dpo": _create_dpo_trainer,
+        "kto": _create_kto_trainer,
+        "orpo": _create_orpo_trainer,
+        "grpo": _create_grpo_trainer,
+    }
+    factory = factories.get(cfg.training_type)
+    if factory is None:
+        raise ValueError(f"Unsupported training_type {cfg.training_type}")
+    return factory(model, tokenizer, train_dataset, cfg, hf_train_args)
+
+
+# --------------------------- Dataset/path validation ---------------------------
+
+def _validate_dataset_compatibility(dataset_path: str, model_max_seq_length: int) -> None:
+    import json
+    from pathlib import Path
+    logger = get_opensloth_logger()
+    cfg_path = Path(dataset_path) / "dataset_config.json"
+    if not cfg_path.exists():
+        logger.warning("Dataset missing dataset_config.json; length mismatch checks skipped.")
+        return
+    with open(cfg_path) as f:
+        data = json.load(f)
+    ds_len = data.get("max_seq_length")
+    if ds_len is None:
+        logger.warning("dataset_config.json missing max_seq_length key")
+        return
+    if model_max_seq_length < ds_len:
+        raise ValueError(
+            "Training max_seq_length is smaller than dataset max_seq_length: "
+            f"{model_max_seq_length} < {ds_len}. Rebuild dataset or increase training setting."
+        )
+    if model_max_seq_length > ds_len:
+        logger.warning(
+            "Training max_seq_length (%s) > dataset max_seq_length (%s); may waste padding.",
+            model_max_seq_length,
+            ds_len,
+        )
+
+
+def _maybe_hot_fix_gemma(cfg: OpenSlothConfig, logger, tokenizer) -> None:
+    if "gemma-3" in cfg.fast_model_args.model_name and cfg.sequence_packing:
+        from opensloth.patching.gemma import patch_gemma3_unsloth_for_sequence_packing
+        logger.info("Applying Gemma-3 sequence packing patch.")
+        patch_gemma3_unsloth_for_sequence_packing()
+    if not hasattr(tokenizer, "pad") and cfg.sequence_packing:
+        from transformers import AutoTokenizer
+        logger.info("Tokenizer lacks pad(); patching from AutoTokenizer.")
+        tk2 = AutoTokenizer.from_pretrained(cfg.fast_model_args.model_name)
+        tokenizer.pad = tk2.pad  # type: ignore[attr-defined]
+
+
+def _apply_grpo_model_args(cfg: OpenSlothConfig, args: dict, logger) -> None:
+    if cfg.training_type != "grpo":
+        return
+    args["fast_inference"] = True
+    if cfg.lora_args and args.get("max_lora_rank") is None:
+        args["max_lora_rank"] = cfg.lora_args.r
+    if args.get("load_in_4bit"):
+        name = args["model_name"]
+        if not name.lower().endswith("-bnb-4bit"):
+            logger.warning("4-bit GRPO model name should end with -bnb-4bit for vLLM best support: %s", name)
+    args.setdefault("gpu_memory_utilization", 0.6)
+
+
+def _setup_comm_backend(cfg: OpenSlothConfig, _logger) -> None:
+    if len(cfg.devices) <= 1:
+        return
+    backend = getattr(cfg, "comm_backend", "allreduce")
+    if backend == "async-ps":
+        from opensloth.comm.async_ps import setup_rpc
+        rank = int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0"))
+        world = len(cfg.devices)
+        rpc_cfg = getattr(cfg, "async_ps_args", None)
+        addr = getattr(rpc_cfg, "master_addr", "127.0.0.1") if rpc_cfg else "127.0.0.1"
+        port = getattr(rpc_cfg, "master_port", "29512") if rpc_cfg else "29512"
+        os.environ.setdefault("MASTER_ADDR", addr)
+        os.environ.setdefault("MASTER_PORT", port)
+        setup_rpc(rank=rank, world_size=world, master_addr=addr, master_port=port)
+    else:
+        from opensloth.nccl_grad_sync import get_callback_and_setup_method
+        _cb, setup_nccl, _destroy = get_callback_and_setup_method()  # local names unused
+        setup_nccl(rank=int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0")), gpus=cfg.devices)
+
+
+def _init_model_and_tokenizer(cfg: OpenSlothConfig, unsloth_modules: dict[str, object] | None = None):
+    logger = get_opensloth_logger()
+    if cfg.pretrained_lora:
+        cfg.fast_model_args.model_name = cfg.pretrained_lora
+    model_args = cfg.fast_model_args.model_dump()
+    _apply_grpo_model_args(cfg, model_args, logger)
+    if unsloth_modules is not None:
+        FastLanguageModel = unsloth_modules["FastLanguageModel"]  # noqa: N806
+    else:
+        from unsloth import FastLanguageModel  # type: ignore
+    model, tokenizer = FastLanguageModel.from_pretrained(**model_args)
+    _maybe_hot_fix_gemma(cfg, logger, tokenizer)
+    _setup_comm_backend(cfg, logger)
+    if (
+        not cfg.fast_model_args.full_finetuning
+        and not cfg.pretrained_lora
+        and cfg.lora_args is not None
+    ):
+        if unsloth_modules is not None:
+            FastModel = unsloth_modules["FastModel"]  # noqa: N806
+        else:
+            from unsloth import FastModel  # type: ignore
+        model = FastModel.get_peft_model(model, **cfg.lora_args.model_dump())  # type: ignore[attr-defined]
+    return model, tokenizer
+
+
+# --------------------------- Dataset loading & trainer wrapper ---------------------------
+
+def _get_trainer(model, tokenizer, cfg: OpenSlothConfig, hf_train_args: TrainingArguments):
+    from datasets import load_from_disk
+    logger = get_opensloth_logger()
+    base = cfg.data_cache_path
+    rank = int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0"))
+    shard_path = os.path.join(base, f"shard_{rank}")
+    path = shard_path if os.path.isdir(shard_path) else base
+    train_ds = load_from_disk(path)
+    _validate_dataset_compatibility(base, cfg.fast_model_args.max_seq_length)
+    if cfg.training_type == "sft" and cfg.filter_overlength_samples:
+        max_len = int(cfg.fast_model_args.max_seq_length)
+        def _ok(ex):
+            ids = ex.get("input_ids")
+            return True if ids is None else len(ids) <= max_len
+        before = len(train_ds)
+        train_ds = train_ds.filter(_ok, num_proc=getattr(hf_train_args, "dataset_num_proc", 1))
+        drop = before - len(train_ds)
+        if drop:
+            logger.warning("Filtered %d/%d samples (%.2f%%) > max_len=%d", drop, before, 100*drop/max(1,before), max_len)
+    return _create_trainer_by_type(model, tokenizer, train_ds, cfg, hf_train_args)
+
+
+def _configure_batch_size(hf_train_args: TrainingArguments) -> None:
+    rank = int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0"))
+    if rank != 0:
+        hf_train_args.report_to = "none"
+
+
+def _create_trainer(model, tokenizer, cfg: OpenSlothConfig, hf_train_args: TrainingArguments):
+    trainer = _get_trainer(model, tokenizer, cfg, hf_train_args)
+    _configure_batch_size(hf_train_args)
+    if cfg.training_type == "sft":
+        from opensloth.patching.inner_training_loop import patch_inner_training_loop_for_sft
+        patch_inner_training_loop_for_sft(trainer, cfg.sequence_packing)
+    if len(cfg.devices) > 1 and os.getenv("OPENSLOTH_LOCAL_RANK", "0") != "0":
+        def _no_op(*_a, **_k):
+            pass
+        trainer._save = _no_op  # type: ignore[attr-defined]
     return trainer
+
+
+def setup_model_and_training(cfg: OpenSlothConfig, hf_train_args: TrainingArguments, unsloth_modules: dict[str, object] | None = None):
+    logger = get_opensloth_logger()
+    logger.start_timing("total_setup")
+    logger.start_timing("model_init")
+    model, tokenizer = _init_model_and_tokenizer(cfg, unsloth_modules)
+    logger.finish_timing("model_init")
+    logger.start_timing("trainer_creation")
+    trainer = _create_trainer(model, tokenizer, cfg, hf_train_args)
+    logger.finish_timing("trainer_creation")
+    logger.finish_timing("total_setup")
+    return trainer, model, tokenizer
 
 
 def _create_trainer_by_type(
@@ -458,92 +480,126 @@ def _maybe_hot_fix_gemma(opensloth_config: OpenSlothConfig, logger, tokenizer) -
         tokenizer.pad = hf_tokenizer.pad  # type: ignore[attr-defined]
 
 
+def _apply_grpo_model_args(opensloth_config: OpenSlothConfig, model_args: dict, logger):
+    # Only adjust if GRPO
+    if opensloth_config.training_type != "grpo":
+        return
+    
+    # Always enable vLLM for GRPO (both new LoRA and pretrained LoRA)
+    model_args["fast_inference"] = True
+    
+    # Set max_lora_rank for vLLM memory calculation
+    if model_args.get("max_lora_rank") is None:
+        if opensloth_config.lora_args:
+            # New LoRA training
+            model_args["max_lora_rank"] = opensloth_config.lora_args.r
+            logger.info("Set max_lora_rank=%s for GRPO (new LoRA)", model_args["max_lora_rank"])
+        elif opensloth_config.pretrained_lora:
+            # Pretrained LoRA - extract rank from adapter config
+            try:
+                import json
+                from pathlib import Path
+                adapter_path = Path(opensloth_config.pretrained_lora) / "adapter_config.json"
+                if adapter_path.exists():
+                    with open(adapter_path) as f:
+                        adapter_config = json.load(f)
+                    lora_rank = adapter_config.get("r", 8)  # default rank 8
+                    model_args["max_lora_rank"] = lora_rank
+                    logger.info("Set max_lora_rank=%s for GRPO (pretrained LoRA)", model_args["max_lora_rank"])
+                else:
+                    logger.warning("adapter_config.json not found, using default max_lora_rank=8")
+                    model_args["max_lora_rank"] = 8
+            except Exception as e:
+                logger.warning(f"Error reading LoRA rank from adapter config: {e}, using default max_lora_rank=8")
+                model_args["max_lora_rank"] = 8
+    
+    # Check for 4-bit model naming convention for vLLM compatibility
+    if model_args.get("load_in_4bit", False):
+        model_name = model_args["model_name"]
+        if not model_name.lower().endswith("-bnb-4bit"):
+            logger.warning(
+                "Model name '%s' does not end with '-bnb-4bit'; may impact vLLM 4-bit loading.",
+                model_name,
+            )
+    
+    model_args.setdefault("gpu_memory_utilization", 0.6)
+
+
+def _setup_comm_backend(opensloth_config: OpenSlothConfig, logger):
+    if len(opensloth_config.devices) <= 1:
+        logger.info("Single GPU detected; skipping distributed comm setup.")
+        return
+    backend = getattr(opensloth_config, "comm_backend", "allreduce")
+    if backend == "async-ps":
+        logger.start_timing("rpc_setup")
+        from opensloth.comm.async_ps import setup_rpc
+        rank = int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0"))
+        world_size = len(opensloth_config.devices)
+        cfg = getattr(opensloth_config, "async_ps_args", None)
+        master_addr = getattr(cfg, "master_addr", "127.0.0.1") if cfg else "127.0.0.1"
+        master_port = getattr(cfg, "master_port", "29512") if cfg else "29512"
+        os.environ.setdefault("MASTER_ADDR", master_addr)
+        os.environ.setdefault("MASTER_PORT", master_port)
+        setup_rpc(rank=rank, world_size=world_size, master_addr=master_addr, master_port=master_port)
+        logger.finish_timing("rpc_setup")
+        logger.info("Initialized Async Parameter Server RPC backend")
+    else:
+        logger.start_timing("nccl_setup")
+        from opensloth.nccl_grad_sync import get_callback_and_setup_method
+        _nccl_cb_cls, setup_nccl_for_opensloth, _destroy_nccl = get_callback_and_setup_method()
+        setup_nccl_for_opensloth(
+            rank=int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0")),
+            gpus=opensloth_config.devices,
+        )
+        logger.finish_timing("nccl_setup")
+
+
 def _init_model_and_tokenizer(
     opensloth_config: OpenSlothConfig,
-    unsloth_modules: Optional[Dict[str, object]] = None,
-) -> Tuple[object, object]:
-    """Initialize base/LoRA model and tokenizer; set up NCCL if multi-GPU."""
+    unsloth_modules: dict[str, object] | None = None,
+) -> tuple[object, object]:
+    """Initialize base/LoRA model and tokenizer; set up comm backend & LoRA."""
     logger = get_opensloth_logger()
-
-    # Use modules from the dictionary if provided, otherwise import (backward compatibility)
     if unsloth_modules is not None:
-        FastLanguageModel = unsloth_modules["FastLanguageModel"]
-    else:
+        FastLanguageModel = unsloth_modules["FastLanguageModel"]  # noqa: N806 (external class)
+    else:  # Lazy import per project policy
         from unsloth import FastLanguageModel  # type: ignore
+    fast_language_model = FastLanguageModel  # local alias (keeps original class name intact)
 
     logger.start_timing("model_loading")
     if opensloth_config.pretrained_lora:
-        logger.info(f"Loading model from {opensloth_config.pretrained_lora} with LoRA weights")
-        opensloth_config.fast_model_args.model_name = opensloth_config.pretrained_lora
+        logger.info(f"Loading base model with pretrained LoRA from {opensloth_config.pretrained_lora}")
+        # For pretrained LoRA, we need to extract the base model name to enable vLLM
+        # The LoRA will be loaded separately after model initialization
+        try:
+            import json
+            from pathlib import Path
+            adapter_path = Path(opensloth_config.pretrained_lora)
+            if adapter_path.is_dir() and (adapter_path / "adapter_config.json").exists():
+                with open(adapter_path / "adapter_config.json") as f:
+                    adapter_config = json.load(f)
+                base_model_name = adapter_config.get("base_model_name_or_path")
+                if base_model_name:
+                    opensloth_config.fast_model_args.model_name = base_model_name
+                    logger.info(f"Using base model: {base_model_name}")
+                else:
+                    logger.warning("Could not find base_model_name_or_path in adapter config, using pretrained_lora path")
+                    opensloth_config.fast_model_args.model_name = opensloth_config.pretrained_lora
+            else:
+                logger.warning("adapter_config.json not found, using pretrained_lora path as model name")
+                opensloth_config.fast_model_args.model_name = opensloth_config.pretrained_lora
+        except Exception as e:
+            logger.warning(f"Error reading adapter config: {e}, using pretrained_lora path as model name")
+            opensloth_config.fast_model_args.model_name = opensloth_config.pretrained_lora
 
-    # Configure GRPO-specific parameters for vLLM fast inference
     model_args = opensloth_config.fast_model_args.model_dump()
-    
-    # For GRPO training, enable fast inference and configure vLLM properly
-    if opensloth_config.training_type == "grpo":
-        logger.info("Configuring model for GRPO training with vLLM fast inference")
-        
-        # Enable fast inference for GRPO (required for vLLM backend)
-        model_args["fast_inference"] = True
-        
-        # Set max_lora_rank if LoRA is configured and not already set
-        if (opensloth_config.lora_args is not None and 
-            model_args.get("max_lora_rank") is None):
-            model_args["max_lora_rank"] = opensloth_config.lora_args.r
-            logger.info(f"Set max_lora_rank to {model_args['max_lora_rank']} for GRPO training")
-        
-        # For GRPO with 4-bit quantization, ensure model name ends with "-bnb-4bit"
-        # This is required for vLLM to properly load quantized models
-        if model_args.get("load_in_4bit", False):
-            model_name = model_args["model_name"]
-            if not model_name.lower().endswith("-bnb-4bit"):
-                logger.warning(
-                    f"Model name '{model_name}' does not end with '-bnb-4bit'. "
-                    "This may cause issues with vLLM 4-bit loading. "
-                    "Consider using a model with '-bnb-4bit' suffix for optimal GRPO performance."
-                )
-        
-        # Configure GPU memory utilization for vLLM
-        if "gpu_memory_utilization" not in model_args or model_args["gpu_memory_utilization"] == 0.7:
-            # Use a slightly lower memory utilization for GRPO to leave room for generation
-            model_args["gpu_memory_utilization"] = 0.6
-            logger.info(f"Set gpu_memory_utilization to {model_args['gpu_memory_utilization']} for GRPO")
+    _apply_grpo_model_args(opensloth_config, model_args, logger)
 
-    model, tokenizer = FastLanguageModel.from_pretrained(**model_args)
+    model, tokenizer = fast_language_model.from_pretrained(**model_args)
     _maybe_hot_fix_gemma(opensloth_config, logger, tokenizer)
     logger.finish_timing("model_loading")
 
-    # Communication backend setup only if >1 GPU
-    if len(opensloth_config.devices) > 1:
-        backend = getattr(opensloth_config, 'comm_backend', 'allreduce')
-        if backend == 'async-ps':
-            logger.start_timing("rpc_setup")
-            try:
-                from opensloth.comm.async_ps import setup_rpc
-            except Exception as e:
-                logger.error(f"Failed to import async PS RPC setup: {e}")
-                raise
-            rank = int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0"))
-            world_size = len(opensloth_config.devices)
-            rpc_cfg = getattr(opensloth_config, 'async_ps_args', None)
-            master_addr = getattr(rpc_cfg, 'master_addr', '127.0.0.1') if rpc_cfg else '127.0.0.1'
-            master_port = getattr(rpc_cfg, 'master_port', '29512') if rpc_cfg else '29512'
-            os.environ.setdefault("MASTER_ADDR", master_addr)
-            os.environ.setdefault("MASTER_PORT", master_port)
-            setup_rpc(rank=rank, world_size=world_size, master_addr=master_addr, master_port=master_port)
-            logger.finish_timing("rpc_setup")
-            logger.info("Initialized Async Parameter Server RPC backend")
-        else:
-            logger.start_timing("nccl_setup")
-            from opensloth.nccl_grad_sync import get_callback_and_setup_method
-            setup_nccl_for_opensloth = get_callback_and_setup_method()[1]
-            setup_nccl_for_opensloth(
-                rank=int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0")),
-                gpus=opensloth_config.devices,
-            )
-            logger.finish_timing("nccl_setup")
-    else:
-        logger.info("Single GPU detected; skipping distributed comm setup.")
+    _setup_comm_backend(opensloth_config, logger)
 
     logger.info(f"Model device: {model.device} | Tokenizer: {tokenizer.__class__.__name__}")
 
@@ -555,12 +611,28 @@ def _init_model_and_tokenizer(
     ):
         logger.start_timing("lora_setup")
         if unsloth_modules is not None:
-            FastModel = unsloth_modules["FastModel"]
-        else:
+            FastModel = unsloth_modules["FastModel"]  # noqa: N806
+        else:  # lazy import
             from unsloth import FastModel  # type: ignore
-
-        model = FastModel.get_peft_model(model, **opensloth_config.lora_args.model_dump())  # type: ignore
+        model = FastModel.get_peft_model(model, **opensloth_config.lora_args.model_dump())  # type: ignore[attr-defined]
         logger.finish_timing("lora_setup")
+    elif opensloth_config.pretrained_lora:
+        # For pretrained LoRA, load the adapters from the saved checkpoint
+        logger.start_timing("pretrained_lora_setup")
+        try:
+            if unsloth_modules is not None:
+                FastModel = unsloth_modules["FastModel"]  # noqa: N806
+            else:  # lazy import
+                from unsloth import FastModel  # type: ignore
+            # Load the pretrained LoRA adapters
+            model = FastModel.from_pretrained(
+                model=model,
+                model_name=opensloth_config.pretrained_lora,
+            )
+            logger.info(f"Successfully loaded pretrained LoRA from {opensloth_config.pretrained_lora}")
+        except Exception as e:
+            logger.warning(f"Failed to load pretrained LoRA: {e}. Continuing without LoRA.")
+        logger.finish_timing("pretrained_lora_setup")
 
     return model, tokenizer
 
@@ -622,9 +694,8 @@ def _get_trainer(
                     f"Filtered {dropped}/{before_n} samples "
                     f"({dropped / max(1, before_n):.2%}) > max_len={max_len}."
                 )
-        else:
-            if opensloth_config.training_type != "sft":
-                logger.info("Skipping over-length filtering (not applicable to non-SFT datasets).")
+        elif opensloth_config.training_type != "sft":
+            logger.info("Skipping over-length filtering (not applicable to non-SFT datasets).")
     except Exception as e:
         logger.error(f"Failed to load dataset. Ensure it was prepared correctly. Error: {e}")
         raise
@@ -711,36 +782,5 @@ def _create_trainer(
 
 
     return trainer
-
-
-def setup_model_and_training(
-    opensloth_config: OpenSlothConfig,
-    hf_train_args: TrainingArguments,
-    unsloth_modules: Optional[Dict[str, object]] = None,
-):
-    """
-    Setup the model, tokenizer, dataset, and trainer for (potentially) multi-GPU training.
-    """
-
-    logger = get_opensloth_logger()
-
-    # Start total setup timing
-    logger.start_timing("total_setup")
-
-    # Configure batch size
-    
-
-    # Model initialization
-    logger.start_timing("model_init")
-    model, tokenizer = _init_model_and_tokenizer(opensloth_config, unsloth_modules)
-    logger.finish_timing("model_init")
-
-    # Trainer creation
-    logger.start_timing("trainer_creation")
-    trainer = _create_trainer(model, tokenizer, opensloth_config, hf_train_args)
-    logger.finish_timing("trainer_creation")
-
-    # Finish total setup timing
-    logger.finish_timing("total_setup")
 
     return trainer, model, tokenizer

@@ -4,14 +4,14 @@ Centralises logic for constructing validated configuration objects.
 """
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Dict, Optional, Tuple, Any
 import json
+from pathlib import Path
+from typing import Any
 
 from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
 
 
-def _deep_merge(base: Dict, override: Dict) -> Dict:
+def _deep_merge(base: dict, override: dict) -> dict:
     """Recursively merges two dictionaries. Override values take precedence."""
     out = dict(base)
     for k, v in override.items():
@@ -23,7 +23,7 @@ def _deep_merge(base: Dict, override: Dict) -> Dict:
             out[k] = v
     return out
 
-def _load_dataset_config(dataset_path: str) -> Dict[str, Any]:
+def _load_dataset_config(dataset_path: str) -> dict[str, Any]:
     """Loads the dataset_config.json file from the processed dataset directory."""
     cfg_file = Path(dataset_path) / "dataset_config.json"
     if not cfg_file.exists():
@@ -42,14 +42,14 @@ class TrainingConfigBuilder:
     def __init__(self, dataset_path: str, method: str = "sft") -> None:
         self.dataset_path = dataset_path
         self.method = method.lower()
-        self._cli_overrides: Dict[str, Any] = {}
+        self._cli_overrides: dict[str, Any] = {}
 
-    def with_cli_args(self, overrides: Dict[str, Any]):
+    def with_cli_args(self, overrides: dict[str, Any]):
         """Applies configuration overrides from the command line."""
         self._cli_overrides = overrides
         return self
 
-    def build(self) -> Tuple[OpenSlothConfig, TrainingArguments]:
+    def build(self) -> tuple[OpenSlothConfig, TrainingArguments]:
         """
         Constructs and validates the final configuration objects.
 
@@ -60,7 +60,7 @@ class TrainingConfigBuilder:
         """
         # 1. Infer settings from the dataset's metadata.
         dataset_cfg = _load_dataset_config(self.dataset_path)
-        inferred_config: Dict[str, Any] = {"opensloth_config": {}}
+        inferred_config: dict[str, Any] = {"opensloth_config": {}}
         
         # Infer model name and max sequence length from the dataset if available
         if dataset_cfg.get("tok_name"):
@@ -112,20 +112,24 @@ class TrainingConfigBuilder:
                     grpo_args["task_type"] = "general"
             final_os_config["grpo_args"] = grpo_args
 
-        # 4. Instantiate Pydantic models. Pydantic will apply its own defaults
-        # for any fields not provided in the final merged configuration.
-        opensloth_config = OpenSlothConfig(**final_os_config)
-        training_args = TrainingArguments(**final_ta_config)
-
-        # Final check for LoRA on DPO/GRPO with pre-tuned adapters
+        # 4. Pre-check for LoRA adapters to avoid conflicts
+        # This must happen BEFORE creating the OpenSlothConfig object
         try:
-            model_path = opensloth_config.fast_model_args.model_name
+            model_path = final_os_config.get("fast_model_args", {}).get("model_name")
             if model_path and Path(model_path).is_dir():
                 adapter_file = Path(model_path) / "adapter_config.json"
                 if adapter_file.exists() and self.method in {"dpo", "grpo"}:
-                    opensloth_config.pretrained_lora = model_path
+                    # This is a pretrained LoRA model - clear any default LoRA config
+                    final_os_config["pretrained_lora"] = model_path
+                    # Explicitly set lora_args to None to prevent Pydantic defaults
+                    final_os_config["lora_args"] = None
         except Exception:
             pass # Ignore errors in this best-effort check
+
+        # 5. Instantiate Pydantic models. Pydantic will apply its own defaults
+        # for any fields not provided in the final merged configuration.
+        opensloth_config = OpenSlothConfig(**final_os_config)
+        training_args = TrainingArguments(**final_ta_config)
 
         return opensloth_config, training_args
 
@@ -134,11 +138,11 @@ class PrepConfigBuilder:
     """Builder for dataset preparation configuration."""
     def __init__(self, method: str = "sft") -> None:
         self.method = method.lower()
-        self._cfg: Dict[str, Any] = {"training_type": self.method}
+        self._cfg: dict[str, Any] = {"training_type": self.method}
     def with_base(self, **kwargs):
         self._cfg.update({k: v for k, v in kwargs.items() if v is not None})
         return self
-    def build(self) -> Dict[str, Any]:
+    def build(self) -> dict[str, Any]:
         return dict(self._cfg)
 
-__all__ = ["TrainingConfigBuilder", "PrepConfigBuilder"]
+__all__ = ["PrepConfigBuilder", "TrainingConfigBuilder"]

@@ -3,10 +3,11 @@ Reward function registry for GRPO training.
 Provides pluggable reward functions for different types of tasks (math, coding, general QA, etc.)
 """
 
-import re
-from typing import Callable, Dict, List, Any
-from abc import ABC, abstractmethod
 import random
+import re
+from abc import ABC, abstractmethod
+from collections.abc import Callable
+from typing import Any, Dict, List
 
 
 class RewardFunction(ABC):
@@ -39,7 +40,7 @@ class RewardFunction(ABC):
             return ""
     
     @abstractmethod
-    def __call__(self, prompts, completions, **kwargs) -> List[float]:
+    def __call__(self, prompts, completions, **kwargs) -> list[float]:
         """
         Calculate rewards for completions.
         
@@ -63,7 +64,7 @@ class LengthPenaltyReward(RewardFunction):
         self.max_length = max_length
         self.penalty = penalty
     
-    def __call__(self, prompts, completions, **kwargs) -> List[float]:
+    def __call__(self, prompts, completions, **kwargs) -> list[float]:
         scores = []
         for completion in completions:
             content = self._extract_completion_content(completion)
@@ -101,7 +102,7 @@ class MathFormatReward(RewardFunction):
             flags=re.MULTILINE|re.DOTALL
         )
     
-    def __call__(self, prompts, completions, **kwargs) -> List[float]:
+    def __call__(self, prompts, completions, **kwargs) -> list[float]:
         scores = []
         for completion in completions:
             s = 0.0
@@ -143,7 +144,7 @@ class MathAnswerReward(RewardFunction):
             flags=re.MULTILINE|re.DOTALL
         )
     
-    def __call__(self, prompts, completions, **kwargs) -> List[float]:
+    def __call__(self, prompts, completions, **kwargs) -> list[float]:
         answers = kwargs.get("answer", [])
         if not answers:
             return [0.0] * len(completions)
@@ -152,7 +153,7 @@ class MathAnswerReward(RewardFunction):
         extracted = [m.group(1) if (m := self.match_format.search(r)) else None for r in responses]
         
         scores = []
-        for guess, true in zip(extracted, answers):
+        for guess, true in zip(extracted, answers, strict=False):
             s = 0.0
             if guess is None:
                 scores.append(-2.0)
@@ -193,7 +194,7 @@ class MathNumberReward(RewardFunction):
             flags=re.MULTILINE|re.DOTALL
         )
     
-    def __call__(self, prompts, completions, **kwargs) -> List[float]:
+    def __call__(self, prompts, completions, **kwargs) -> list[float]:
         answers = kwargs.get("answer", [])
         if not answers:
             return [0.0] * len(completions)
@@ -202,7 +203,7 @@ class MathNumberReward(RewardFunction):
         extracted = [m.group(1) if (m := self.match_numbers.search(r)) else None for r in responses]
         
         scores = []
-        for guess, true in zip(extracted, answers):
+        for guess, true in zip(extracted, answers, strict=False):
             if guess is None:
                 scores.append(-2.5)
                 continue
@@ -222,7 +223,7 @@ class CodeCorrectnessReward(RewardFunction):
     def __init__(self):
         super().__init__("code_correctness", "Rewards syntactically correct code")
     
-    def __call__(self, prompts, completions, **kwargs) -> List[float]:
+    def __call__(self, prompts, completions, **kwargs) -> list[float]:
         scores = []
         for completion in completions:
             content = self._extract_completion_content(completion)
@@ -265,7 +266,6 @@ class CodeCorrectnessReward(RewardFunction):
     def _proper_indentation(self, text: str) -> bool:
         """Check for consistent indentation."""
         lines = text.split('\n')
-        indent_stack = [0]
         
         for line in lines:
             stripped = line.lstrip()
@@ -294,7 +294,7 @@ class DemoReward(RewardFunction):
         self.use_random = use_random
         self.call_count = 0
     
-    def __call__(self, prompts, completions, **kwargs) -> List[float]:
+    def __call__(self, prompts, completions, **kwargs) -> list[float]:
         self.call_count += 1
         
         should_print = False
@@ -352,7 +352,7 @@ class DemoReward(RewardFunction):
 
 
 # Registry for reward functions
-_REWARD_REGISTRY: Dict[str, RewardFunction] = {}
+_REWARD_REGISTRY: dict[str, RewardFunction] = {}
 
 
 def register_reward_function(reward_func: RewardFunction) -> None:
@@ -367,12 +367,12 @@ def get_reward_function(name: str) -> RewardFunction:
     return _REWARD_REGISTRY[name]
 
 
-def list_reward_functions() -> List[str]:
+def list_reward_functions() -> list[str]:
     """List all available reward function names."""
     return list(_REWARD_REGISTRY.keys())
 
 
-def get_reward_functions(names: List[str]) -> List[RewardFunction]:
+def get_reward_functions(names: list[str]) -> list[RewardFunction]:
     """Get multiple reward functions by name."""
     return [get_reward_function(name) for name in names]
 
@@ -386,7 +386,7 @@ register_reward_function(CodeCorrectnessReward())
 register_reward_function(DemoReward())
 
 
-def create_reward_preset(task_type: str) -> List[str]:
+def create_reward_preset(task_type: str) -> list[str]:
     """Create a preset list of reward functions for common task types."""
     presets = {
         "math": ["math_format", "math_answer", "math_number", "demo_reward"],

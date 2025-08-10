@@ -4,11 +4,12 @@ CLI for preparing datasets for OpenSloth training (SFT, DPO, GRPO).
 """
 import json
 from pathlib import Path
+
 import typer
+import typer as _typer_internal
 
 from opensloth.api import run_prepare_data
-import typer as _typer_internal
-from opensloth.config.builder import PrepConfigBuilder, TRAINING_PRESETS
+from opensloth.config.builder import TRAINING_PRESETS, PrepConfigBuilder
 
 app = typer.Typer(name="os-data", help="Prepare datasets for OpenSloth training.", add_completion=True)
 

@@ -5,9 +5,9 @@ This script shows how the new mode-aware system works in practice.
 """
 
 import os
+import shutil
 import sys
 import tempfile
-import shutil
 from pathlib import Path
 
 # Add the src directory to Python path

@@ -1,6 +1,6 @@
+from enum import Enum
 from multiprocessing import cpu_count
 from typing import Any, Literal, Optional
-from enum import Enum
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -40,7 +40,7 @@ class FastModelArgs(BaseModel):
     )
     use_gradient_checkpointing: str = "unsloth"
     # vLLM-specific parameters for GRPO training
-    fast_inference: bool = False
+    fast_inference: bool = True
     max_lora_rank: int | None = None
     gpu_memory_utilization: float = 0.7
 
@@ -146,7 +146,8 @@ class OpenSlothConfig(BaseModel):
     lora_args: LoraArgs | None = Field(default_factory=LoraArgs)
     pretrained_lora: str | None = Field(
         default=None,
-        description="Path to pretrained LoRA model for continous lora training",
+        description="Path to pretrained LoRA model for continuous LoRA training",
+        json_schema_extra={'cli_alias': 'pretrained-lora'}
     )
     sequence_packing: bool = Field(
         default=True,
@@ -205,6 +206,17 @@ class OpenSlothConfig(BaseModel):
         if self.lora_args is not None and not isinstance(self.lora_args, LoraArgs):
             raise ValueError("lora_args must be an instance of LoraArgs")
 
+        # Handle pretrained LoRA conflict
+        if self.pretrained_lora is not None:
+            if self.lora_args is not None:
+                import warnings
+                warnings.warn(
+                    f"Both pretrained_lora ({self.pretrained_lora}) and lora_args are set. "
+                    f"When loading a pretrained LoRA model, lora_args will be ignored and set to None.",
+                    stacklevel=2
+                )
+                self.lora_args = None
+
         # Training type specifics
         if self.training_type == "dpo":
             if self.dpo_args is None:
@@ -219,7 +231,7 @@ class OpenSlothConfig(BaseModel):
         else:  # SFT
             if self.dpo_args is not None or self.grpo_args is not None:
                 import warnings
-                warnings.warn("For SFT training, dpo_args and grpo_args will be ignored.")
+                warnings.warn("For SFT training, dpo_args and grpo_args will be ignored.", stacklevel=2)
             self.dpo_args = None
             self.grpo_args = None
 
