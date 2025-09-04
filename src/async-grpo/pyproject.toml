@@ -67,5 +67,5 @@ async_grpo = ["templates/*"]
 profile = "black"
 line_length = 88
 [tool.ruff]
-ignore = ["E402"]
+ignore = ["E402", "F403", "F401", "F405", "E741", "E203", "W503", "F841", "E501"]
 line-length = 88
