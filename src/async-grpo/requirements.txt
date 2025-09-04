@@ -1,0 +1,2 @@
+torch
+cupy-cuda12x; platform_system == "Linux"

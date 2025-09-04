@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "async-grpo"
+version = "0.1.0"
+description = "Distributed GRPO training with CUDA IPC for zero-copy GPU memory sharing"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "async-grpo contributors"},
+]
+keywords = ["grpo", "distributed", "training", "cuda", "ipc", "gpu"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "torch",
+    "cupy-cuda12x; platform_system == 'Linux'",
+    "transformers",
+    "trl",
+    "datasets",
+    "unsloth",
+    "vllm",
+    "speedy-utils",
+    "safetensors",
+    "loguru",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "isort",
+    "flake8",
+]
+
+[project.scripts]
+async-grpo = "async_grpo.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/async-grpo/async-grpo"
+Documentation = "https://github.com/async-grpo/async-grpo#readme"
+Repository = "https://github.com/async-grpo/async-grpo.git"
+Issues = "https://github.com/async-grpo/async-grpo/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+async_grpo = ["templates/*"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+[tool.ruff]
+ignore = ["E402"]
+line-length = 88
