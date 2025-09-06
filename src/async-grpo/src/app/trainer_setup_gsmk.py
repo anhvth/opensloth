@@ -3,6 +3,7 @@
 Simplified GRPO Trainer Setup for GSM8K
 Based on Unsloth GRPO notebook with minimal dependencies
 """
+from typing import List, cast
 import os
 import re
 import torch
@@ -20,7 +21,8 @@ def get_trainer():
     """
     from unsloth import FastLanguageModel
     from datasets import load_dataset
-    from trl import GRPOConfig, GRPOTrainer
+    from trl.trainer.grpo_config import GRPOConfig
+    from trl.trainer.grpo_trainer import GRPOTrainer
     from vllm import SamplingParams
     
     
@@ -29,7 +31,7 @@ def get_trainer():
     lora_rank = 16
     
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name="/data/hf-models/Qwen/Qwen3-1.7B-Base",  # Using 0.6B as per project
+        model_name="Qwen/Qwen3-0.6B-Base",  # Using 0.6B as per project
         max_seq_length=max_seq_length,
         load_in_4bit=False,
         fast_inference=os.getenv("FAST_INFERENCE", "1") == "1",
@@ -101,10 +103,17 @@ def get_trainer():
             {"role": "user", "content": example["question"]},
         ]
     
-    dataset = dataset.map(lambda x: {
-        "prompt": format_prompt(x),
-        "answer": extract_answer(x["answer"]),
-    })
+    # Ensure we have a Dataset object, not DatasetDict
+    if hasattr(dataset, 'map'):
+        dataset = dataset.map(lambda x: {
+            "prompt": format_prompt(x),
+            "answer": extract_answer(x["answer"]),
+        })
+        # Cast to proper Dataset type to satisfy type checker
+        from datasets import Dataset
+        dataset = cast(Dataset, dataset)
+    else:
+        raise ValueError("Expected Dataset object from load_dataset")
     
     # ==================== Reward Functions ====================
     
@@ -127,22 +136,22 @@ def get_trainer():
     PRINTED_TIMES = 0
     PRINT_EVERY_STEPS = 5
     
-    def match_format_exactly(completions, **kwargs):
+    def match_format_exactly(completions, **kwargs) -> List[float]:
         """Reward for exact format matching."""
         scores = []
         for completion in completions:
-            score = 0
+            score = 0.0
             response = completion[0]["content"]
             if match_format.search(response) is not None:
                 score += 3.0
             scores.append(score)
         return scores
     
-    def match_format_approximately(completions, **kwargs):
+    def match_format_approximately(completions, **kwargs) -> List[float]:
         """Reward for partial format matching."""
         scores = []
         for completion in completions:
-            score = 0
+            score = 0.0
             response = completion[0]["content"]
             
             score += 0.5 if response.count(reasoning_end) == 1 else -1.0
@@ -151,7 +160,7 @@ def get_trainer():
             scores.append(score)
         return scores
     
-    def check_answer(prompts, completions, answer, **kwargs):
+    def check_answer(prompts, completions, answer, **kwargs) -> List[float]:
         """Reward for correct answer extraction."""
         responses = [completion[0]["content"] for completion in completions]
         
@@ -162,7 +171,7 @@ def get_trainer():
         
         scores = []
         for guess, true_answer in zip(extracted_responses, answer):
-            score = 0
+            score = 0.0
             if guess is None:
                 scores.append(-2.0)
                 continue
@@ -185,7 +194,7 @@ def get_trainer():
             scores.append(score)
         return scores
     
-    def check_numbers(prompts, completions, answer, **kwargs):
+    def check_numbers(prompts, completions, answer, **kwargs) -> List[float]:
         """Reward for numerical answer matching with debug output."""
         global PRINTED_TIMES, PRINT_EVERY_STEPS
         
@@ -218,7 +227,7 @@ def get_trainer():
                 guess_num = float(guess.strip().replace(",", ""))
                 scores.append(3.5 if guess_num == true_num else -1.5)
             except Exception:
-                scores.append(0)
+                scores.append(0.0)
                 
         return scores
     
@@ -233,9 +242,15 @@ def get_trainer():
     )
     
     training_args = GRPOConfig(
-        vllm_sampling_params=vllm_sampling_params,
-    disable_tqdm=True,
-    torch_compile=False,
+        generation_kwargs={
+            "min_p": 0.1,
+            "top_p": 1.0,
+            "top_k": -1,
+            "stop": [tokenizer.eos_token],
+            "include_stop_str_in_output": True,
+        },
+        disable_tqdm=True,
+        torch_compile=False,
         temperature=1.0,
         learning_rate=5e-6,
         weight_decay=0.01,
@@ -258,7 +273,7 @@ def get_trainer():
     trainer = GRPOTrainer(
         model=model,
         processing_class=tokenizer,
-        reward_funcs=[
+        reward_funcs=[  # type: ignore
             match_format_exactly,
             match_format_approximately,
             check_answer,

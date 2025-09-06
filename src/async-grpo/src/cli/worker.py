@@ -147,7 +147,7 @@ def main():
         try:
             job_data, job_id, claimed_job_path = claim_job(worker_device)
 
-            if job_data and job_id:
+            if job_data and job_id and claimed_job_path:
                 idle_count = 0
                 logger.info(
                     f"Claimed job {job_id} from {os.path.basename(claimed_job_path)}"

@@ -111,4 +111,5 @@ def write_version_info(version_info: dict, version_file: str):
 
 def read_version_info(version_file: str) -> Dict:
     """Read version info from file, return empty dict if file doesn't exist or is invalid."""
-    return AtomicFileOps.read_json(version_file, default={})
+    result = AtomicFileOps.read_json(version_file, default={})
+    return result if result is not None else {}

@@ -26,6 +26,7 @@ import os
 import shutil
 import subprocess
 import sys
+from typing import Optional
 
 
 def load_trainer_from_config(config_path: str, device_id: int = 0):
@@ -66,7 +67,7 @@ def load_trainer_from_config(config_path: str, device_id: int = 0):
     return get_trainer()
 
 
-def train_single(config_path: str, device_id: int = 0, max_steps: int = None):
+def train_single(config_path: str, device_id: int = 0, max_steps: Optional[int] = None):
     """
     Train a single GRPO model using the specified configuration.
 
@@ -106,7 +107,7 @@ def train_single(config_path: str, device_id: int = 0, max_steps: int = None):
         sys.exit(1)
 
 
-# ==================== Distributed Training (Legacy) ====================
+# ==================== Distributed Training ====================
 
 
 def run_in_process(name: str, cmd: str, env: dict = {}):
@@ -141,9 +142,9 @@ def run_in_process(name: str, cmd: str, env: dict = {}):
         process.wait()
 
 
-def start_distributed_training(config_path: str):
+def start_distributed_training(config_path: str, num_workers: int = 1):
     """Start the parameter server and workers in separate processes with logs + terminal prefix."""
-    devices = [1, 2, 3]
+    devices = list(range(1, num_workers + 1))  # Workers start from GPU 1
     server_cmd = (
         "parameter_server",
         f"python src/cli/parameter_server.py --config {config_path}",
@@ -185,7 +186,7 @@ Examples:
   %(prog)s src/app/trainer_setup_gsmk.py           # Train with GSM8K config
   %(prog)s src/app/trainer_setup.py --device 1     # Train on GPU 1
   %(prog)s src/app/trainer_setup_gsmk.py --steps 50  # Override training steps
-  %(prog)s --distributed                           # Distributed training (legacy)
+  %(prog)s --distributed                           # Distributed training
         """,
     )
 
@@ -205,6 +206,10 @@ Examples:
     )
 
     parser.add_argument(
+        "--num-workers", "-n", type=int, default=1, help="Number of worker processes (default: 1)"
+    )
+
+    parser.add_argument(
         "--distributed",
         action="store_true",
         help="Start distributed training with parameter server and workers",
@@ -218,7 +223,7 @@ Examples:
 
     if args.distributed:
         print("Starting distributed training...")
-        start_distributed_training(args.config)
+        start_distributed_training(args.config, args.num_workers)
     else:
         train_single(args.config, args.device, args.steps)
 

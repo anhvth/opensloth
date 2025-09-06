@@ -196,7 +196,7 @@ class RemoteMemory:
         """Push a list of tensors by serializing them first."""
         from .process_tensors import serialize_tensors
         flat_tensor, _ = serialize_tensors(tensors)
-        self.push_from_tensor(flat_tensor, stream)
+        self.push_from_tensor(flat_tensor, stream) # type: ignore
 
     def pull_serialized_tensors(self, stream: cp.cuda.Stream) -> list:
         """Pull and deserialize tensors back to a list."""
