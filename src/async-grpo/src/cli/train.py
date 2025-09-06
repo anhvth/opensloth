@@ -59,10 +59,11 @@ def load_trainer_from_config(config_path: str, device_id: int = 0):
         raise AttributeError(f"No 'get_trainer' function found in {config_path}")
 
     get_trainer = getattr(module, "get_trainer")
+    
 
     # Call get_trainer with device_id
     print(f"Loading trainer from {config_path} on device {device_id}...")
-    return get_trainer(fast_inference=True)
+    return get_trainer()
 
 
 def train_single(config_path: str, device_id: int = 0, max_steps: int = None):
