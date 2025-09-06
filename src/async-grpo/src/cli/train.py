@@ -109,7 +109,7 @@ def train_single(config_path: str, device_id: int = 0, max_steps: int = None):
 # ==================== Distributed Training (Legacy) ====================
 
 
-def run_in_process(name: str, cmd: str, env: dict = None):
+def run_in_process(name: str, cmd: str, env: dict = {}):
     """Run a shell command in a subprocess, log to file, and stream to terminal with prefix."""
     os.makedirs("worker", exist_ok=True)
     log_path = os.path.join("worker", f"log_{name}.txt")
