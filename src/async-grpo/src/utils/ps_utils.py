@@ -41,7 +41,7 @@ def update_shared_weights(trainer, handle_path: str, shutdown_event: threading.E
         logger.info(f"Bucket update step {trainer.state.global_step} (v{version_info['version_id']})")
 
 
-@threaded
+@threaded # type: ignore
 def throw_job_data(trainer, shutdown_event, job_queue, result_cache_lock, max_input_in_folder, max_pending_output):
     """
     Continuously populate the input folder with jobs to keep workers busy.
@@ -98,7 +98,7 @@ def throw_job_data(trainer, shutdown_event, job_queue, result_cache_lock, max_in
     logger.info("Job creation thread shutting down")
 
 
-@threaded
+@threaded # type: ignore
 def collect_results(shutdown_event, result_cache, result_cache_lock):
     """
     Continuously collect completed job results and cache them.

@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Dict, Any
 import torch
 from utils.logger import logger
 
@@ -59,7 +59,7 @@ def serialize_tensors(tensors: List):
                 cupy_array = cp.empty(total_numel, dtype=cp.float32)
             
             # Convert CuPy array to PyTorch tensor using DLPack for zero-copy
-            torch_tensor = torch.utils.dlpack.from_dlpack(cupy_array.toDlpack())
+            torch_tensor = torch.from_dlpack(cupy_array.toDlpack()) # type: ignore
             
             if k == "bfloat16":
                 # Reinterpret uint16 as bfloat16 BEFORE fill to avoid dtype-cast copies
@@ -73,7 +73,7 @@ def serialize_tensors(tensors: List):
         logger.debug(f"Allocated {k} bucket: {total_numel} elements on {device} (via CuPy+DLPack)")
 
     # Fill buckets and build meta with device info
-    meta = [None] * len(tensors)
+    meta: List[Dict[str, Any]] = [{}] * len(tensors)  # Initialize with empty dicts
     with torch.no_grad():
         for k, lst in groups.items():
             offset = 0

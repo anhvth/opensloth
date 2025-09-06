@@ -120,14 +120,14 @@ class AtomicFileOps:
         Context manager for atomic write operations.
         Creates temp file, yields it, then atomically renames to final path.
         """
-        file_path = Path(file_path)
-        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path = Path(file_path) # type: ignore
+        file_path.parent.mkdir(parents=True, exist_ok=True) # type: ignore
         
         # Create temp file in same directory to ensure atomic rename
         temp_fd, temp_path = tempfile.mkstemp(
             suffix='.tmp',
-            prefix=f"{file_path.name}.",
-            dir=file_path.parent
+            prefix=f"{file_path.name}.", # type: ignore
+            dir=file_path.parent # type: ignore
         )
         
         try:

@@ -3,12 +3,27 @@ import argparse
 import importlib.util
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-# Disable tqdm progress bars and monitor threads early to avoid crashes
-os.environ.setdefault("TQDM_DISABLE", "1")
-# Disable torch.compile/TorchDynamo/Inductor to improve stability with background threads
-os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
-os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+
+def bootstrap_env():
+    """Bootstrap environment settings. MUST be called before importing Unsloth/torch."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--device", "-d", type=int, default=0)
+    args, _ = parser.parse_known_args()
+    
+    # Set CUDA_VISIBLE_DEVICES based on device argument
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device)
+    
+    # Disable tqdm progress bars and monitor threads early to avoid crashes
+    os.environ.setdefault("TQDM_DISABLE", "1")
+    # Disable torch.compile/TorchDynamo/Inductor to improve stability with background threads
+    os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
+    os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+    
+    print(f"[ParameterServer] Bootstrap: device={args.device}, CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']}")
+    return args.device
+
+
+ps_device = bootstrap_env()
 
 import threading
 import time
@@ -99,7 +114,7 @@ PS_STATE = {}
 
 
 if __name__ == "__main__":
-    # Parse command line arguments
+    # Parse command line arguments (device already parsed in bootstrap)
     parser = argparse.ArgumentParser(description="GRPO Parameter Server")
     parser.add_argument(
         "--config", 
@@ -107,10 +122,19 @@ if __name__ == "__main__":
         default="src/app/trainer_setup_gsmk.py",
         help="Path to trainer configuration file"
     )
+    parser.add_argument(
+        "--device", "-d",
+        type=int, 
+        default=0,
+        help="CUDA device ID for parameter server (default: 0)"
+    )
     args = parser.parse_args()
     
+    # Use the device from bootstrap
+    device_id = ps_device
+    
     # Load trainer from config
-    get_trainer = load_trainer_from_config(args.config, device_id=0)
+    get_trainer = load_trainer_from_config(args.config, device_id=device_id)
     trainer = get_trainer()
 
     # Initial setup: Serialize and export weights
@@ -164,9 +188,10 @@ if __name__ == "__main__":
         if worker_results is None:
             raise StopIteration("Training interrupted by shutdown")
 
-        # Move all tensors to PS device (cuda:0) to avoid device mismatch
-        result_on_device = move_tensors_to_device(worker_results["result"], "cuda:0")
-        return result_on_device
+        # Move all tensors to PS device to avoid device mismatch
+        result_on_device = move_tensors_to_device(worker_results["result"], f"cuda:{device_id}")
+        assert isinstance(result_on_device, dict)
+        return result_on_device 
 
     class AfterOptimizerStepCallback(TrainerCallback):
         def on_optimizer_step(self, args, state, control, **kwargs):

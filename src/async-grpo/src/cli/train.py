@@ -15,8 +15,8 @@ Examples:
     # Train with custom device
     python src/cli/train.py src/app/trainer_setup_gsmk.py --device 1
 
-    # Distributed training (legacy mode)
-    python src/cli/train.py --distributed
+    # Distributed training with device control
+    python src/cli/train.py --master_device_id 0 --worker_device_ids 1,2,3
 """
 
 import argparse
@@ -142,16 +142,18 @@ def run_in_process(name: str, cmd: str, env: dict = {}):
         process.wait()
 
 
-def start_distributed_training(config_path: str, num_workers: int = 1):
+def start_distributed_training(config_path: str, master_device_id: int = 0, worker_device_ids: Optional[list] = None):
     """Start the parameter server and workers in separate processes with logs + terminal prefix."""
-    devices = list(range(1, num_workers + 1))  # Workers start from GPU 1
+    if worker_device_ids is None:
+        worker_device_ids = [1]  # Default to GPU 1
+    
     server_cmd = (
         "parameter_server",
-        f"python src/cli/parameter_server.py --config {config_path}",
+        f"python src/cli/parameter_server.py --config {config_path} --device {master_device_id}",
     )
     worker_cmds = [
         (f"worker_{d}", f"python src/cli/worker.py -d {d} --config {config_path}")
-        for d in devices
+        for d in worker_device_ids
     ]
 
     processes = []
@@ -186,7 +188,7 @@ Examples:
   %(prog)s src/app/trainer_setup_gsmk.py           # Train with GSM8K config
   %(prog)s src/app/trainer_setup.py --device 1     # Train on GPU 1
   %(prog)s src/app/trainer_setup_gsmk.py --steps 50  # Override training steps
-  %(prog)s --distributed                           # Distributed training
+  %(prog)s --master_device_id 0 --worker_device_ids 1,2,3  # Distributed training with device control
         """,
     )
 
@@ -210,9 +212,15 @@ Examples:
     )
 
     parser.add_argument(
-        "--distributed",
-        action="store_true",
-        help="Start distributed training with parameter server and workers",
+        "--master_device_id",
+        type=int,
+        help="CUDA device ID for the parameter server (master)",
+    )
+
+    parser.add_argument(
+        "--worker_device_ids",
+        type=str,
+        help="Comma-separated list of CUDA device IDs for workers (e.g., '1,2,3')",
     )
 
     args = parser.parse_args()
@@ -221,9 +229,27 @@ Examples:
     if os.path.exists("worker"):
         shutil.rmtree("worker")
 
-    if args.distributed:
+    # Check for distributed training mode
+    use_distributed = args.master_device_id is not None or args.worker_device_ids is not None
+    
+    if use_distributed:
+        # Parse worker device IDs
+        worker_device_ids = None
+        if args.worker_device_ids:
+            try:
+                worker_device_ids = [int(x.strip()) for x in args.worker_device_ids.split(',')]
+            except ValueError:
+                print("Error: worker_device_ids must be a comma-separated list of integers")
+                sys.exit(1)
+        
+        # Default master device ID
+        master_device_id = args.master_device_id if args.master_device_id is not None else 0
+        
         print("Starting distributed training...")
-        start_distributed_training(args.config, args.num_workers)
+        print(f"Master device ID: {master_device_id}")
+        print(f"Worker device IDs: {worker_device_ids}")
+        
+        start_distributed_training(args.config, master_device_id, worker_device_ids)
     else:
         train_single(args.config, args.device, args.steps)
 

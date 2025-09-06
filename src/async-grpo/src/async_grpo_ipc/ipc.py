@@ -231,6 +231,9 @@ def open_remote_memory(path: str = DEFAULT_HANDLE_PATH, target_device: Optional[
         except Exception:
             target_device = 0
     
+    # Ensure target_device is always an int after the check above
+    assert isinstance(target_device, int), f"target_device must be int, got {type(target_device)}"
+    
     # Use device context for all IPC operations
     with cp.cuda.Device(target_device):
         flags = getattr(cp.cuda.runtime, "cudaIpcMemLazyEnablePeerAccess", 0)

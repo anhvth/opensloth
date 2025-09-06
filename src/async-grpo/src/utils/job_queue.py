@@ -5,7 +5,7 @@ from utils.logger import logger
 from utils.atomic_file_ops import AtomicFileOps
 
 
-def create_job(generation_batch: Dict, job_id: str) -> str:
+def create_job(generation_batch: Dict, job_id: str) -> bool:
     """Create a job file for workers to process.
     Return create status
     """

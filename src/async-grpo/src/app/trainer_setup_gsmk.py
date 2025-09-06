@@ -6,7 +6,7 @@ Based on Unsloth GRPO notebook with minimal dependencies
 from typing import List, cast
 import os
 import re
-import torch
+
 
 
 def get_trainer():
@@ -20,10 +20,11 @@ def get_trainer():
         Configured GRPOTrainer instance
     """
     from unsloth import FastLanguageModel
+    from trl import GRPOConfig, GRPOTrainer # type: ignore
     from datasets import load_dataset
-    from trl.trainer.grpo_config import GRPOConfig
-    from trl.trainer.grpo_trainer import GRPOTrainer
     from vllm import SamplingParams
+    
+    assert 'unsloth' in str(GRPOTrainer).lower(), "Expected GRPOTrainer from unsloth"
     
     
     # ==================== Model Setup ====================
@@ -240,7 +241,7 @@ def get_trainer():
         stop=[tokenizer.eos_token],
         include_stop_str_in_output=True,
     )
-    
+
     training_args = GRPOConfig(
         generation_kwargs={
             "min_p": 0.1,
