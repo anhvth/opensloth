@@ -109,56 +109,56 @@ def memcpy_d2d_async(dst_ptr: int, src_ptr: int, nbytes: int, stream: cp.cuda.St
     """
     Device-to-device async memory copy with peer access enabling and host fallback.
     """
-    try:
-        cp.cuda.runtime.memcpyAsync(dst_ptr, src_ptr, nbytes, CUDA_MEMCPY_DEVICE_TO_DEVICE, stream.ptr)
-    except Exception as e:
-        # If direct D2D copy fails, try enabling peer access or fall back to host copy
-        logger.warning(f"Direct D2D copy failed (dst=0x{dst_ptr:x}, src=0x{src_ptr:x}, {nbytes}B): {e}")
-        logger.info("Attempting peer access setup...")
+    # try:
+    cp.cuda.runtime.memcpyAsync(dst_ptr, src_ptr, nbytes, CUDA_MEMCPY_DEVICE_TO_DEVICE, stream.ptr)
+    # except Exception as e:
+    #     # If direct D2D copy fails, try enabling peer access or fall back to host copy
+    #     logger.warning(f"Direct D2D copy failed (dst=0x{dst_ptr:x}, src=0x{src_ptr:x}, {nbytes}B): {e}")
+    #     logger.info("Attempting peer access setup...")
         
-        # Try to enable peer access between devices
-        try:
-            current_device = cp.cuda.runtime.getDevice()
-            device_count = cp.cuda.runtime.getDeviceCount()
+    #     # Try to enable peer access between devices
+    #     try:
+    #         current_device = cp.cuda.runtime.getDevice()
+    #         device_count = cp.cuda.runtime.getDeviceCount()
             
-            for device_id in range(device_count):
-                if device_id != current_device:
-                    try:
-                        can_access = cp.cuda.runtime.deviceCanAccessPeer(current_device, device_id)
-                        if can_access:
-                            cp.cuda.runtime.deviceEnablePeerAccess(device_id, 0)
-                            logger.info(f"Enabled peer access from device {current_device} to {device_id}")
-                    except Exception as peer_e:
-                        if "peer access is already enabled" in str(peer_e).lower():
-                            logger.info(f"Peer access already enabled: {current_device} -> {device_id}")
-                        else:
-                            logger.warning(f"Failed to enable peer access {current_device} -> {device_id}: {peer_e}")
+    #         for device_id in range(device_count):
+    #             if device_id != current_device:
+    #                 try:
+    #                     can_access = cp.cuda.runtime.deviceCanAccessPeer(current_device, device_id)
+    #                     if can_access:
+    #                         cp.cuda.runtime.deviceEnablePeerAccess(device_id, 0)
+    #                         logger.info(f"Enabled peer access from device {current_device} to {device_id}")
+    #                 except Exception as peer_e:
+    #                     if "peer access is already enabled" in str(peer_e).lower():
+    #                         logger.info(f"Peer access already enabled: {current_device} -> {device_id}")
+    #                     else:
+    #                         logger.warning(f"Failed to enable peer access {current_device} -> {device_id}: {peer_e}")
             
-            # Retry the D2D copy
-            cp.cuda.runtime.memcpyAsync(dst_ptr, src_ptr, nbytes, CUDA_MEMCPY_DEVICE_TO_DEVICE, stream.ptr)
-            logger.success(f"D2D copy succeeded after peer access setup ({nbytes}B)")
+    #         # Retry the D2D copy
+    #         cp.cuda.runtime.memcpyAsync(dst_ptr, src_ptr, nbytes, CUDA_MEMCPY_DEVICE_TO_DEVICE, stream.ptr)
+    #         logger.success(f"D2D copy succeeded after peer access setup ({nbytes}B)")
             
-        except Exception as e2:
-            logger.error(f"D2D copy still failed after peer access attempt: {e2}")
-            logger.warning(f"Falling back to host-pinned copy ({nbytes}B)...")
+    #     except Exception as e2:
+    #         logger.error(f"D2D copy still failed after peer access attempt: {e2}")
+    #         logger.warning(f"Falling back to host-pinned copy ({nbytes}B)...")
             
-            # Fall back to host-pinned copy (slower but should work)
-            try:
-                # Use canonical CUDA runtime names
-                host_buffer = cp.cuda.runtime.hostAlloc(nbytes, 0)  # flags=0 for default
-                try:
-                    # Device to host
-                    cp.cuda.runtime.memcpyAsync(host_buffer, src_ptr, nbytes, 2, stream.ptr)  # D2H = 2
-                    stream.synchronize()
+    #         # Fall back to host-pinned copy (slower but should work)
+    #         try:
+    #             # Use canonical CUDA runtime names
+    #             host_buffer = cp.cuda.runtime.hostAlloc(nbytes, 0)  # flags=0 for default
+    #             try:
+    #                 # Device to host
+    #                 cp.cuda.runtime.memcpyAsync(host_buffer, src_ptr, nbytes, 2, stream.ptr)  # D2H = 2
+    #                 stream.synchronize()
                     
-                    # Host to device  
-                    cp.cuda.runtime.memcpyAsync(dst_ptr, host_buffer, nbytes, 1, stream.ptr)  # H2D = 1
-                    logger.success(f"Completed host-pinned fallback copy ({nbytes}B)")
-                finally:
-                    cp.cuda.runtime.freeHost(host_buffer)
-            except Exception as e3:
-                logger.error(f"Host-pinned fallback also failed: {e3}")
-                raise RuntimeError(f"All memory copy strategies failed: D2D={e}, retry={e2}, host={e3}")
+    #                 # Host to device  
+    #                 cp.cuda.runtime.memcpyAsync(dst_ptr, host_buffer, nbytes, 1, stream.ptr)  # H2D = 1
+    #                 logger.success(f"Completed host-pinned fallback copy ({nbytes}B)")
+    #             finally:
+    #                 cp.cuda.runtime.freeHost(host_buffer)
+    #         except Exception as e3:
+    #             logger.error(f"Host-pinned fallback also failed: {e3}")
+    #             raise RuntimeError(f"All memory copy strategies failed: D2D={e}, retry={e2}, host={e3}")
 
 
 @dataclass
