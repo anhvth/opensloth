@@ -284,5 +284,4 @@ def get_trainer():
         train_dataset=dataset,
     )
     
-    trainer.model.training = True
     return trainer
