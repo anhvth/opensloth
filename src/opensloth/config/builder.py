@@ -101,24 +101,13 @@ class TrainingConfigBuilder:
         final_os_config["data_cache_path"] = self.dataset_path
         final_os_config["training_type"] = self.method
         
-        # Special handling for GRPO task type presets
-        if self.method == "grpo":
-            grpo_args = final_os_config.get("grpo_args", {})
-            if not grpo_args.get("task_type"):
-                ds_lower = self.dataset_path.lower()
-                if any(k in ds_lower for k in ["dapo", "math", "gsm", "openmath"]):
-                    grpo_args["task_type"] = "math"
-                else:
-                    grpo_args["task_type"] = "general"
-            final_os_config["grpo_args"] = grpo_args
-
         # 4. Pre-check for LoRA adapters to avoid conflicts
         # This must happen BEFORE creating the OpenSlothConfig object
         try:
             model_path = final_os_config.get("fast_model_args", {}).get("model_name")
             if model_path and Path(model_path).is_dir():
                 adapter_file = Path(model_path) / "adapter_config.json"
-                if adapter_file.exists() and self.method in {"dpo", "grpo"}:
+                if adapter_file.exists() and self.method == "dpo":
                     # This is a pretrained LoRA model - clear any default LoRA config
                     final_os_config["pretrained_lora"] = model_path
                     # Explicitly set lora_args to None to prevent Pydantic defaults

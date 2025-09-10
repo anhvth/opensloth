@@ -337,6 +337,89 @@ def prepare_qwen_dataset():
         except Exception as e:
             print(f"[WARN] Failed to write dataset_config.json: {e}")
 
+        # Save complete training configuration for train.py with schema validation
+        # Note: The schema is auto-generated from Pydantic models using scripts/generate_schema.py
+        try:
+            training_config = {
+                "$schema": "./schemas/training_config.schema.json",
+                "opensloth_config": {
+                    "data_cache_path": args.output_dir,
+                    "devices": list(range(num_shards)),  # Will be overridden by train.py
+                    "fast_model_args": {
+                        "model_name": args.tokenizer_name,
+                        "max_seq_length": args.max_seq_length,
+                        "load_in_4bit": True,
+                        "load_in_8bit": False,
+                        "full_finetuning": False,
+                        "use_gradient_checkpointing": "unsloth",
+                        "fast_inference": False,
+                        "max_lora_rank": None,
+                        "gpu_memory_utilization": 0.7
+                    },
+                    "lora_args": {
+                        "finetune_vision_layers": False,
+                        "finetune_language_layers": True,
+                        "finetune_attention_modules": True,
+                        "finetune_mlp_modules": True,
+                        "r": 8,
+                        "lora_alpha": 16,
+                        "lora_dropout": 0.0,
+                        "bias": "none",
+                        "random_state": 3407,
+                        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+                        "use_rslora": False
+                    },
+                    "pretrained_lora": None,
+                    "sequence_packing": True,
+                    "training_type": "sft",
+                    "log_level": "info",
+                    "filter_overlength_samples": True
+                },
+                "training_args": {
+                    "output_dir": "saves/loras/",
+                    "per_device_train_batch_size": 2,
+                    "learning_rate": 2e-4,
+                    "gradient_accumulation_steps": 4,
+                    "logging_steps": 1,
+                    "num_train_epochs": 3,
+                    "lr_scheduler_type": "linear",
+                    "warmup_steps": 10,
+                    "save_total_limit": 2,
+                    "optim": "adamw_8bit",
+                    "weight_decay": 0.01,
+                    "save_only_model": False,
+                    "resume_from_checkpoint": None,
+                    "seed": 42,
+                    "report_to": "tensorboard",
+                    "eval_strategy": "no",
+                    "dataset_num_proc": 8
+                },
+                "dataset_prep_config": {
+                    "tokenizer_name": args.tokenizer_name,
+                    "chat_template": args.chat_template,
+                    "dataset_name": args.dataset_name,
+                    "split": args.split,
+                    "num_samples": args.num_samples,
+                    "num_proc": args.num_proc,
+                    "gpus": num_shards,
+                    "output_dir": args.output_dir,
+                    "train_on_target_only": args.train_on_target_only,
+                    "instruction_part": args.instruction_part if args.train_on_target_only else None,
+                    "response_part": args.response_part if args.train_on_target_only else None,
+                    "max_seq_length": args.max_seq_length,
+                    "training_type": "sft",
+                    "debug": args.debug,
+                    "hf_token": None
+                }
+            }
+
+            with open(os.path.join(args.output_dir, "training_config.json"), "w", encoding="utf-8") as f:
+                json.dump(training_config, f, ensure_ascii=False, indent=2)
+            print(f"[INFO] Training config saved to {args.output_dir}/training_config.json")
+            print(f"[INFO] ✨ Config includes JSON Schema for VS Code IntelliSense support")
+        except Exception as e:
+            print(f"[WARN] Failed to write training_config.json: {e}")
+
         print(f"[INFO] Dataset (with {num_shards} shard(s)) saved to {args.output_dir}")
         
         # Show final statistics

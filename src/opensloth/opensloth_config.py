@@ -39,8 +39,7 @@ class FastModelArgs(BaseModel):
         json_schema_extra={'cli_alias': 'full-finetuning'}
     )
     use_gradient_checkpointing: str = "unsloth"
-    # vLLM-specific parameters for GRPO training
-    fast_inference: bool = True
+    fast_inference: bool = False
     max_lora_rank: int | None = None
     gpu_memory_utilization: float = 0.7
 

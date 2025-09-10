@@ -1,6 +1,6 @@
 """
 Multi-GPU training script for OpenSloth.
-Supports various training types: SFT, DPO, KTO, ORPO, GRPO.
+Supports SFT (Supervised Fine-Tuning) only.
 Handles weight synchronization, model setup, and distributed training coordination.
 """
 
@@ -43,7 +43,7 @@ def _import_unsloth(gpu: int) -> dict[str, Any]:
 
     # Dynamic imports (order matters)
     import unsloth  # type: ignore
-    from trl import GRPOConfig, GRPOTrainer, SFTConfig, SFTTrainer  # type: ignore
+    from trl import SFTConfig, SFTTrainer  # type: ignore
     from opensloth.logging_config import get_opensloth_logger
 
     logger = get_opensloth_logger(allow_unknown_gpu=True)
@@ -55,8 +55,6 @@ def _import_unsloth(gpu: int) -> dict[str, Any]:
         "FastModel": unsloth.FastModel,
         "SFTConfig": SFTConfig,
         "SFTTrainer": SFTTrainer,
-        "GRPOConfig": GRPOConfig,
-        "GRPOTrainer": GRPOTrainer,
     }
 
 MAGIC_TWO = 2
@@ -199,9 +197,7 @@ def train_on_single_gpu(
 
     logger.start_timing("actual_training")
     
-    # Skip debug env logging for cleaner GRPO output
-    if opensloth_config.training_type != "grpo":
-        logger.debug(f"Environment: {os.environ}")
+    logger.debug(f"Environment: {os.environ}")
     
     # Patch: Only resume from checkpoint if a valid path is provided
     try:
@@ -416,16 +412,28 @@ def initialize_training_config(config_file):
 
 
 def setup_envs(opensloth_config: OpenSlothConfig, training_config: TrainingArguments):
-    os.environ["OPENSLOTH_WORLD_SIZE"] = str(len(opensloth_config.devices))
+    world_size = len(opensloth_config.devices)
+    os.environ["OPENSLOTH_WORLD_SIZE"] = str(world_size)
+    
+    # For single GPU training, explicitly disable distributed training
+    if world_size == 1:
+        os.environ["LOCAL_RANK"] = "-1"
+        os.environ["RANK"] = "-1" 
+        os.environ["WORLD_SIZE"] = "1"
+        # Remove any existing distributed training env vars that might interfere
+        for key in ["MASTER_ADDR", "MASTER_PORT"]:
+            if key in os.environ:
+                del os.environ[key]
+    
     os.environ["OPENSLOTH_FORWARD_BZ"] = str(
         training_config.per_device_train_batch_size
         # * training_config.gradient_accumulation_steps
-        * len(opensloth_config.devices)
+        * world_size
     )
     os.environ["OPENSLOTH_GLOBAL_BZ"] = str(
         training_config.per_device_train_batch_size
         * training_config.gradient_accumulation_steps
-        * len(opensloth_config.devices)
+        * world_size
     )
 
     print(f"Global batch size: {os.environ['OPENSLOTH_GLOBAL_BZ']}")

@@ -1,4 +1,4 @@
-"""Trainer factory package: creates and configures trainer instances (SFT, DPO, GRPO, etc.).
+"""Trainer factory package: creates and configures trainer instances (SFT only).
 
 Public entrypoints:
 - setup_model_and_training: main high-level function used by scripts.

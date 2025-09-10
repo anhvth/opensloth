@@ -7,7 +7,6 @@ from opensloth.logging_config import get_opensloth_logger
 from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
 
 from .base import (
-    apply_grpo_model_args,
     maybe_hot_fix_gemma,
     setup_comm_backend,
     validate_dataset_compatibility,
@@ -50,7 +49,6 @@ def _init_model_and_tokenizer(cfg: OpenSlothConfig, unsloth_modules: dict[str, A
             logger.error(f"Error reading adapter config: {e}. vLLM might fail.")
 
     model_args = cfg.fast_model_args.model_dump()
-    apply_grpo_model_args(cfg, model_args)
 
     # Load base model (potentially with vLLM enabled)
     model, tokenizer = FastLanguageModel.from_pretrained(**model_args)

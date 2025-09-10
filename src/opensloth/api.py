@@ -139,37 +139,33 @@ def run_training(
     return opensloth_config, training_args
 
 
-def run_prepare_data(config: DatasetPrepConfig) -> str:
-    """Runs the appropriate dataset preparer based on the config."""
-    from opensloth.opensloth_config import DatasetPrepConfig
+# def run_prepare_data(config: DatasetPrepConfig) -> str:
+#     """Runs the appropriate dataset preparer based on the config."""
+#     from opensloth.opensloth_config import DatasetPrepConfig
 
-    # Convert Pydantic model to dict for backwards compatibility
-    if isinstance(config, DatasetPrepConfig):
-        config_dict = config.model_dump()
-    else:
-        # Backwards compatibility - assume it's already a dict
-        config_dict = config
+#     # Convert Pydantic model to dict for backwards compatibility
+#     if isinstance(config, DatasetPrepConfig):
+#         config_dict = config.model_dump()
+#     else:
+#         # Backwards compatibility - assume it's already a dict
+#         config_dict = config
 
-    method = config_dict.get("training_type", "sft")
-    if method == "grpo":
-        from opensloth.dataset.prepare_grpo import GRPODatasetPreparer
-        preparer = GRPODatasetPreparer()
-    else:
-        from opensloth.dataset import GemmaDatasetPreparer, QwenDatasetPreparer
+#     method = config_dict.get("training_type", "sft")
+#     from opensloth.dataset import GemmaDatasetPreparer, QwenDatasetPreparer
 
-        model_name = config_dict.get("tokenizer_name", "").lower()
-        if "gemma" in model_name:
-            preparer = GemmaDatasetPreparer()
-        elif 'qwen' in model_name:
-            preparer = QwenDatasetPreparer()
-        else:
-            raise NotImplementedError("Unsupported tokenizer type")
+#     model_name = config_dict.get("tokenizer_name", "").lower()
+#         if "gemma" in model_name:
+#             preparer = GemmaDatasetPreparer()
+#         elif 'qwen' in model_name:
+#             preparer = QwenDatasetPreparer()
+#         else:
+#             raise NotImplementedError("Unsupported tokenizer type")
 
-    output_dir = preparer.run_with_config(config_dict)
-    return output_dir
+#     output_dir = preparer.run_with_config(config_dict)
+#     return output_dir
 
 
-__all__ = ["run_prepare_data", "run_training"]
+__all__ = [ "run_training"]
 
 
 # Export DatasetPrepConfig for convenience

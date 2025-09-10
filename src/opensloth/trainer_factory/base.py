@@ -20,13 +20,6 @@ def ensure_dataset_features(dataset, required: list[str], training_type: str) ->
 def validate_dataset_for_type(dataset, training_type: str) -> None:
     if training_type == "sft":
         ensure_dataset_features(dataset, ["input_ids", "labels"], training_type)
-    elif training_type == "dpo":
-        ensure_dataset_features(dataset, ["prompt", "chosen", "rejected"], training_type)
-    elif training_type == "grpo":
-        # GRPO can use prompt or pre-tokenized input_ids
-        feats = getattr(dataset, "features", None)
-        if feats is None or ("prompt" not in feats and "input_ids" not in feats):
-            raise ValueError("GRPO dataset must have either 'prompt' or 'input_ids'")
     else:
         raise ValueError(f"Unsupported training_type for validation: {training_type}")
 
@@ -60,37 +53,7 @@ def validate_dataset_compatibility(dataset_path: str, model_max_seq_length: int)
         )
 
 
-def apply_grpo_model_args(cfg: OpenSlothConfig, model_args: dict) -> None:
-    if cfg.training_type != "grpo":
-        return
-    
-    # Always enable fast_inference (vLLM) for GRPO
-    model_args["fast_inference"] = True
-    
-    # Set max_lora_rank for vLLM memory calculation
-    if model_args.get("max_lora_rank") is None:
-        if cfg.lora_args:
-            # New LoRA training
-            model_args["max_lora_rank"] = cfg.lora_args.r
-        elif cfg.pretrained_lora:
-            # Pretrained LoRA - extract rank from adapter config
-            try:
-                import json
-                from pathlib import Path
-                adapter_path = Path(cfg.pretrained_lora) / "adapter_config.json"
-                if adapter_path.exists():
-                    with open(adapter_path) as f:
-                        adapter_config = json.load(f)
-                    lora_rank = adapter_config.get("r", 8)  # Default to 8 if not found
-                    model_args["max_lora_rank"] = lora_rank
-                else:
-                    # Fallback default
-                    model_args["max_lora_rank"] = 8
-            except Exception:
-                # Fallback default
-                model_args["max_lora_rank"] = 8
-    
-    model_args.setdefault("gpu_memory_utilization", 0.6)
+
 
 
 def maybe_hot_fix_gemma(cfg: OpenSlothConfig, logger, tokenizer) -> None:
@@ -108,8 +71,6 @@ def maybe_hot_fix_gemma(cfg: OpenSlothConfig, logger, tokenizer) -> None:
 def setup_comm_backend(cfg: OpenSlothConfig) -> None:
     if len(cfg.devices) <= 1:
         return
-
-
 
     from opensloth.nccl_grad_sync import get_callback_and_setup_method
     _cb, setup_nccl, _destroy = get_callback_and_setup_method()

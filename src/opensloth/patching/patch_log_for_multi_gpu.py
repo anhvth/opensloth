@@ -36,23 +36,6 @@ AGGREGATION_STRATEGIES: dict[str, str] = {
     "rewards/rejected": "mean", 
     "rewards/accuracies": "mean",
     "rewards/margins": "mean",
-    
-    # GRPO trainer metrics
-    "reward": "mean",
-    "reward_std": "mean",
-    "kl": "mean",
-    "entropy": "mean",
-    "clip_ratio": "mean",
-    "clip_ratio/low_mean": "mean",
-    "clip_ratio/low_min": "mean", 
-    "clip_ratio/high_mean": "mean",
-    "clip_ratio/high_max": "mean",
-    "clip_ratio/region_mean": "mean",
-    
-    # GRPO completion metrics
-    "completions/mean_length": "mean",
-    "completions/min_length": "min",  # Use min for minimum values
-    "completions/max_length": "max",  # Use max for maximum values
     "completions/clipped_ratio": "mean",
     "completions/mean_terminated_length": "mean",
     "completions/min_terminated_length": "min",
@@ -177,7 +160,7 @@ class Flag:
 
 def patch_log_for_multi_gpu(trainer):
     """
-    Universal multi-GPU log patch that works for any trainer type (SFT, DPO, GRPO, etc.).
+    Universal multi-GPU log patch that works for any trainer type (SFT, DPO, etc.).
     Dynamically detects numeric metrics and applies intelligent aggregation strategies.
     """
     return trainer

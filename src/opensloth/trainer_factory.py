@@ -1,4 +1,4 @@
-"""Trainer factory utilities for creating trainers (SFT, DPO, GRPO, etc.)."""
+"""Trainer factory utilities for creating trainers (SFT)."""
 # ruff: noqa: I001
 
 from __future__ import annotations
@@ -49,15 +49,6 @@ def _create_sft_trainer(
 
 
 
-def _create_trainer_by_type(model, tokenizer, train_dataset, cfg: OpenSlothConfig, hf_train_args: TrainingArguments):
-    factories = {
-        "sft": _create_sft_trainer,
-    }
-    factory = factories.get(cfg.training_type)
-    if factory is None:
-        raise ValueError(f"Unsupported training_type {cfg.training_type}. Only SFT is supported.")
-    return factory(model, tokenizer, train_dataset, cfg, hf_train_args)
-
 
 # --------------------------- Dataset/path validation ---------------------------
 
@@ -96,10 +87,6 @@ def _maybe_hot_fix_gemma(cfg: OpenSlothConfig, logger, tokenizer) -> None:
         tokenizer.pad = tk2.pad  # type: ignore[attr-defined]
 
 
-def _apply_grpo_model_args(cfg: OpenSlothConfig, args: dict, logger) -> None:
-    # GRPO not supported - only SFT is available
-    pass
-
 
 def _setup_comm_backend(cfg: OpenSlothConfig, _logger) -> None:
     if len(cfg.devices) <= 1:
@@ -114,7 +101,6 @@ def _init_model_and_tokenizer(cfg: OpenSlothConfig, unsloth_modules: dict[str, o
     if cfg.pretrained_lora:
         cfg.fast_model_args.model_name = cfg.pretrained_lora
     model_args = cfg.fast_model_args.model_dump()
-    _apply_grpo_model_args(cfg, model_args, logger)
     if unsloth_modules is not None:
         FastLanguageModel = unsloth_modules["FastLanguageModel"]  # noqa: N806
     else:

@@ -5,12 +5,14 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "datasets>=4.0.0",
+    "datasets>=3.4.1,<4.0.0",
     "llmcompressor>=0.6.0",
     "loguru>=0.7.3",
+    "nvidia-ml-py>=13.580.65",
     "pydantic>=2.11.7",
     "speedy-utils>=1.1.17",
     "tabulate>=0.9.0",
+    "tensorboard>=2.20.0",
     "transformers>=4.56.1",
     "unsloth>=2025.9.4",
     "unsloth_zoo>=2025.9.5",
