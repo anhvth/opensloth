@@ -1,0 +1,188 @@
+# """Trainer factory utilities for creating trainers (SFT)."""
+# # ruff: noqa: I001
+
+# from __future__ import annotations
+# import os
+
+
+# from collections.abc import Iterable
+# from .logging_config import get_opensloth_logger
+# from .opensloth_config import OpenSlothConfig, TrainingArguments
+
+
+# # --------------------------- Helpers ---------------------------
+
+# def _ensure_data_correct_for_training_type(dataset, training_type: str) -> None:
+#     logger = get_opensloth_logger()
+#     if training_type == "sft":
+#         feats = getattr(dataset, "features", None)
+#         if feats is None or "input_ids" not in feats:
+#             raise ValueError("SFT dataset must have 'input_ids' column")
+#         if "labels" not in feats:
+#             raise ValueError("SFT dataset must have 'labels' column")
+#     else:
+#         raise NotImplementedError(f"Validation for training_type={training_type} not implemented")
+
+
+# # --------------------------- Trainer constructors ---------------------------
+
+# def create_sft_trainer(
+#     model,
+#     tokenizer,
+#     train_dataset,
+#     _cfg: OpenSlothConfig,  # kept for uniform signature
+#     hf_train_args: TrainingArguments,
+# ):
+#     from transformers import DataCollatorForSeq2Seq
+#     from trl import SFTTrainer
+
+#     _ensure_data_correct_for_training_type(train_dataset, "sft")
+#     data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer)
+#     hf_train_args.skip_prepare_dataset = True  # type: ignore[attr-defined]
+#     return SFTTrainer(
+#         model=model,
+#         train_dataset=train_dataset,
+#         args=hf_train_args,          # type: ignore[arg-type]
+#         tokenizer=tokenizer,         # type: ignore[arg-type]
+#         data_collator=data_collator,
+#     )
+
+
+
+
+# # --------------------------- Dataset/path validation ---------------------------
+
+# def _validate_dataset_compatibility(dataset_path: str, model_max_seq_length: int) -> None:
+#     import json
+#     from pathlib import Path
+#     logger = get_opensloth_logger()
+#     cfg_path = Path(dataset_path) / "dataset_config.json"
+#     if not cfg_path.exists():
+#         logger.warning("Dataset missing dataset_config.json; length mismatch checks skipped.")
+#         return
+#     with open(cfg_path) as f:
+#         data = json.load(f)
+#     ds_len = data.get("max_seq_length")
+#     if ds_len is None:
+#         logger.warning("dataset_config.json missing max_seq_length key")
+#         return
+#     if model_max_seq_length < ds_len:
+#         raise ValueError(
+#             "Training max_seq_length is smaller than dataset max_seq_length: "
+#             f"{model_max_seq_length} < {ds_len}. Rebuild dataset or increase training setting."
+#         )
+#     if model_max_seq_length > ds_len:
+#         logger.warning(f"Training max_seq_length ({model_max_seq_length}) is larger than dataset max_seq_length ({ds_len}). This is OK but may be inefficient. Consider re-preparing the dataset with --max-seq-length {model_max_seq_length} for optimal performance.")
+
+
+# def _maybe_hot_fix_gemma(cfg: OpenSlothConfig, logger, tokenizer) -> None:
+#     if "gemma-3" in cfg.fast_model_args.model_name and cfg.sequence_packing:
+#         from opensloth.patching.gemma import patch_gemma3_unsloth_for_sequence_packing
+#         logger.info("Applying Gemma-3 sequence packing patch.")
+#         patch_gemma3_unsloth_for_sequence_packing()
+#     if not hasattr(tokenizer, "pad") and cfg.sequence_packing:
+#         from transformers import AutoTokenizer
+#         logger.info("Tokenizer lacks pad(); patching from AutoTokenizer.")
+#         tk2 = AutoTokenizer.from_pretrained(cfg.fast_model_args.model_name)
+#         tokenizer.pad = tk2.pad  # type: ignore[attr-defined]
+
+
+
+# def _setup_comm_backend(cfg: OpenSlothConfig, _logger) -> None:
+#     if len(cfg.devices) <= 1:
+#         return
+#     from opensloth.nccl_grad_sync import get_callback_and_setup_method
+#     _cb, setup_nccl, _destroy = get_callback_and_setup_method()
+#     setup_nccl(rank=int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0")), gpus=cfg.devices)
+
+
+# def _init_model_and_tokenizer(cfg: OpenSlothConfig, unsloth_modules: dict[str, object] | None = None):
+#     logger = get_opensloth_logger()
+#     if cfg.pretrained_lora:
+#         cfg.fast_model_args.model_name = cfg.pretrained_lora
+#     model_args = cfg.fast_model_args.model_dump()
+#     if unsloth_modules is not None:
+#         FastLanguageModel = unsloth_modules["FastLanguageModel"]  # noqa: N806
+#     else:
+#         from unsloth import FastLanguageModel  # type: ignore
+#     model, tokenizer = FastLanguageModel.from_pretrained(**model_args)
+#     _maybe_hot_fix_gemma(cfg, logger, tokenizer)
+#     _setup_comm_backend(cfg, logger)
+#     if (
+#         not cfg.fast_model_args.full_finetuning
+#         and not cfg.pretrained_lora
+#         and cfg.lora_args is not None
+#     ):
+#         if unsloth_modules is not None:
+#             FastModel = unsloth_modules["FastModel"]  # noqa: N806
+#         else:
+#             from unsloth import FastModel  # type: ignore
+#         model = FastModel.get_peft_model(model, **cfg.lora_args.model_dump())  # type: ignore[attr-defined]
+#     return model, tokenizer
+
+
+# # --------------------------- Dataset loading & trainer wrapper ---------------------------
+
+# def _get_trainer(model, tokenizer, cfg: OpenSlothConfig, hf_train_args: TrainingArguments):
+#     from datasets import load_from_disk
+#     logger = get_opensloth_logger()
+#     base = cfg.data_cache_path
+#     rank = int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0"))
+#     shard_path = os.path.join(base, f"shard_{rank}")
+#     path = shard_path if os.path.isdir(shard_path) else base
+#     train_ds = load_from_disk(path)
+#     _validate_dataset_compatibility(base, cfg.fast_model_args.max_seq_length)
+#     if cfg.training_type == "sft" and cfg.filter_overlength_samples:
+#         max_len = int(cfg.fast_model_args.max_seq_length)
+#         def _ok(ex):
+#             ids = ex.get("input_ids")
+#             return True if ids is None else len(ids) <= max_len
+#         before = len(train_ds)
+#         train_ds = train_ds.filter(_ok, num_proc=getattr(hf_train_args, "dataset_num_proc", 1))
+#         drop = before - len(train_ds)
+#         if drop:
+#             logger.warning(f"Filtered {drop}/{before} samples ({100*drop/max(1,before):.2f}%) > max_len={max_len}")
+#     return _create_trainer_by_type(model, tokenizer, train_ds, cfg, hf_train_args)
+
+
+# def _configure_batch_size(hf_train_args: TrainingArguments) -> None:
+#     rank = int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0"))
+#     if rank != 0:
+#         hf_train_args.report_to = "none"
+
+
+# def _create_trainer(model, tokenizer, cfg: OpenSlothConfig, hf_train_args: TrainingArguments):
+#     trainer = _get_trainer(model, tokenizer, cfg, hf_train_args)
+#     _configure_batch_size(hf_train_args)
+#     if cfg.training_type == "sft":
+#         from opensloth.patching.inner_training_loop import patch_inner_training_loop_for_sft
+#         patch_inner_training_loop_for_sft(trainer, cfg.sequence_packing)
+#     if len(cfg.devices) > 1 and os.getenv("OPENSLOTH_LOCAL_RANK", "0") != "0":
+#         def _no_op(*_a, **_k):
+#             pass
+#         trainer._save = _no_op  # type: ignore[attr-defined]
+#     return trainer
+
+
+# def setup_model_and_training(cfg: OpenSlothConfig, hf_train_args: TrainingArguments, unsloth_modules: dict[str, object] | None = None):
+#     logger = get_opensloth_logger()
+#     logger.start_timing("total_setup")
+#     logger.start_timing("model_init")
+#     model, tokenizer = _init_model_and_tokenizer(cfg, unsloth_modules)
+#     logger.finish_timing("model_init")
+#     logger.start_timing("trainer_creation")
+#     trainer = _create_trainer(model, tokenizer, cfg, hf_train_args)
+#     logger.finish_timing("trainer_creation")
+#     logger.finish_timing("total_setup")
+#     return trainer, model, tokenizer
+
+
+
+
+
+
+
+
+
+
+

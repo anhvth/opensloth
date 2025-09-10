@@ -96,26 +96,69 @@ def _load_dataset(cfg: OpenSlothConfig, hf_train_args: TrainingArguments):
     validate_dataset_for_type(train_ds, cfg.training_type)
     return train_ds
 
+import os
+
+
+from collections.abc import Iterable
+
+
+# --------------------------- Helpers ---------------------------
+
+def _ensure_data_correct_for_training_type(dataset, training_type: str) -> None:
+    logger = get_opensloth_logger()
+    if training_type == "sft":
+        feats = getattr(dataset, "features", None)
+        if feats is None or "input_ids" not in feats:
+            raise ValueError("SFT dataset must have 'input_ids' column")
+        if "labels" not in feats:
+            raise ValueError("SFT dataset must have 'labels' column")
+    else:
+        raise NotImplementedError(f"Validation for training_type={training_type} not implemented")
+
+
+# --------------------------- Trainer constructors ---------------------------
+
+def create_sft_trainer(
+    model,
+    tokenizer,
+    train_dataset,
+    _cfg: OpenSlothConfig,  # kept for uniform signature
+    hf_train_args: TrainingArguments,
+):
+    from transformers import DataCollatorForSeq2Seq
+    from trl import SFTTrainer
+
+    data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer)
+    hf_train_args.skip_prepare_dataset = True  # type: ignore[attr-defined]
+    return SFTTrainer(
+        model=model,
+        train_dataset=train_dataset,
+        args=hf_train_args,          # type: ignore[arg-type]
+        tokenizer=tokenizer,         # type: ignore[arg-type]
+        data_collator=data_collator,
+    )
+
+
 
 def _configure_reporting(hf_args: TrainingArguments) -> None:
     rank = int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0"))
     if rank != 0:
         hf_args.report_to = "none"
-
-from .constructors import create_sft_trainer
-def _create_trainer(model, tokenizer, cfg: OpenSlothConfig, hf_args: TrainingArguments):
-    trainer = create_sft_trainer(model, tokenizer, _load_dataset(cfg, hf_args), cfg, hf_args)
-    _configure_reporting(hf_args)
-    if cfg.training_type == "sft":
-        from opensloth.patching.inner_training_loop import (
-            patch_inner_training_loop_for_sft,
-        )
-        patch_inner_training_loop_for_sft(trainer, cfg.sequence_packing)
-    if len(cfg.devices) > 1 and os.getenv("OPENSLOTH_LOCAL_RANK", "0") != "0":
-        def _no_op(*_a, **_k):
-            return None
-        trainer._save = _no_op  # type: ignore[attr-defined]
-    return trainer
+# from opensloth.trainer_factory import create_sft_trainer
+# from .constructors import create_sft_trainer
+# def _create_trainer(model, tokenizer, cfg: OpenSlothConfig, hf_args: TrainingArguments):
+#     trainer = create_sft_trainer(model, tokenizer, _load_dataset(cfg, hf_args), cfg, hf_args)
+#     _configure_reporting(hf_args)
+#     if cfg.training_type == "sft":
+#         from opensloth.patching.inner_training_loop import (
+#             patch_inner_training_loop_for_sft,
+#         )
+#         patch_inner_training_loop_for_sft(trainer, cfg.sequence_packing)
+#     if len(cfg.devices) > 1 and os.getenv("OPENSLOTH_LOCAL_RANK", "0") != "0":
+#         def _no_op(*_a, **_k):
+#             return None
+#         trainer._save = _no_op  # type: ignore[attr-defined]
+#     return trainer
 
 
 def setup_model_and_training(opensloth_config: OpenSlothConfig, hf_train_args: TrainingArguments, unsloth_modules: dict[str, Any] | None = None):
@@ -126,7 +169,8 @@ def setup_model_and_training(opensloth_config: OpenSlothConfig, hf_train_args: T
     model, tokenizer = _init_model_and_tokenizer(opensloth_config, unsloth_modules)
     logger.finish_timing("model_init")
     logger.start_timing("trainer_creation")
-    trainer = _create_trainer(model, tokenizer, opensloth_config, hf_train_args)
+    dataset =  _load_dataset(opensloth_config, hf_train_args)
+    trainer = create_sft_trainer(model, tokenizer, dataset, opensloth_config, hf_train_args)
     logger.finish_timing("trainer_creation")
     logger.finish_timing("total_setup")
     return trainer, model, tokenizer

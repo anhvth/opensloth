@@ -251,7 +251,7 @@
         },
         "per_device_train_batch_size": {
           "cli_alias": "bs",
-          "default": 2,
+          "default": 8,
           "description": "Batch size per GPU.",
           "title": "Per Device Train Batch Size",
           "type": "integer"
