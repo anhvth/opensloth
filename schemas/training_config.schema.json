@@ -1,0 +1,422 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OpenSloth Training Configuration",
+  "description": "Complete configuration schema for OpenSloth training with IntelliSense support",
+  "type": "object",
+  "properties": {
+    "opensloth_config": {
+      "type": "object",
+      "title": "OpenSloth Configuration",
+      "description": "Main OpenSloth configuration combining model, LoRA, and training settings",
+      "properties": {
+        "data_cache_path": {
+          "type": "string",
+          "description": "Path to cache directory for datasets"
+        },
+        "devices": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "default": [0],
+          "description": "List of GPU indices to use"
+        },
+        "fast_model_args": {
+          "type": "object",
+          "title": "FastModel Arguments",
+          "description": "Configuration for Unsloth's FastModel initialization",
+          "properties": {
+            "model_name": {
+              "type": "string",
+              "description": "The model name or path to use",
+              "examples": [
+                "unsloth/Qwen2.5-0.5B-Instruct",
+                "unsloth/llama-3.2-1b-instruct",
+                "microsoft/DialoGPT-medium"
+              ]
+            },
+            "max_seq_length": {
+              "type": "integer",
+              "default": 4096,
+              "minimum": 128,
+              "maximum": 131072,
+              "description": "Maximum sequence length for the model"
+            },
+            "load_in_4bit": {
+              "type": "boolean",
+              "default": true,
+              "description": "Load the model in 4-bit (QLoRA)"
+            },
+            "load_in_8bit": {
+              "type": "boolean",
+              "default": false,
+              "description": "Load the model in 8-bit"
+            },
+            "full_finetuning": {
+              "type": "boolean",
+              "default": false,
+              "description": "Perform full fine-tuning instead of LoRA"
+            },
+            "use_gradient_checkpointing": {
+              "type": "string",
+              "default": "unsloth",
+              "enum": ["unsloth", "auto", "true", "false"],
+              "description": "Gradient checkpointing strategy"
+            },
+            "fast_inference": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable fast inference optimizations"
+            },
+            "max_lora_rank": {
+              "type": ["integer", "null"],
+              "default": null,
+              "minimum": 1,
+              "description": "Maximum LoRA rank (optional)"
+            },
+            "gpu_memory_utilization": {
+              "type": "number",
+              "default": 0.7,
+              "minimum": 0.1,
+              "maximum": 1.0,
+              "description": "GPU memory utilization ratio"
+            }
+          },
+          "required": ["model_name"],
+          "additionalProperties": true
+        },
+        "lora_args": {
+          "type": ["object", "null"],
+          "title": "LoRA Arguments",
+          "description": "Configuration for LoRA parameters in PEFT",
+          "properties": {
+            "finetune_vision_layers": {
+              "type": "boolean",
+              "default": false,
+              "description": "Finetune vision layers"
+            },
+            "finetune_language_layers": {
+              "type": "boolean",
+              "default": true,
+              "description": "Finetune language layers"
+            },
+            "finetune_attention_modules": {
+              "type": "boolean",
+              "default": true,
+              "description": "Finetune attention modules"
+            },
+            "finetune_mlp_modules": {
+              "type": "boolean",
+              "default": true,
+              "description": "Finetune MLP modules"
+            },
+            "r": {
+              "type": "integer",
+              "default": 8,
+              "minimum": 1,
+              "maximum": 1024,
+              "description": "LoRA rank (r)"
+            },
+            "lora_alpha": {
+              "type": "integer",
+              "default": 16,
+              "minimum": 1,
+              "description": "LoRA alpha scaling parameter"
+            },
+            "lora_dropout": {
+              "type": "number",
+              "default": 0.0,
+              "minimum": 0.0,
+              "maximum": 1.0,
+              "description": "LoRA dropout rate"
+            },
+            "bias": {
+              "type": "string",
+              "default": "none",
+              "enum": ["none", "all", "lora_only"],
+              "description": "Bias configuration for LoRA"
+            },
+            "random_state": {
+              "type": "integer",
+              "default": 3407,
+              "description": "Random seed for LoRA initialization"
+            },
+            "target_modules": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "q_proj", "k_proj", "v_proj", "o_proj",
+                  "gate_proj", "up_proj", "down_proj",
+                  "embed_tokens", "lm_head"
+                ]
+              },
+              "default": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+              "description": "List of target modules for LoRA application"
+            },
+            "use_rslora": {
+              "type": "boolean",
+              "default": false,
+              "description": "Use RSLoRA (Rank-Stabilized LoRA)"
+            }
+          },
+          "additionalProperties": true
+        },
+        "pretrained_lora": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Path to pretrained LoRA model for continuous LoRA training"
+        },
+        "sequence_packing": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable packing of sequences for training efficiency"
+        },
+        "training_type": {
+          "type": "string",
+          "enum": ["sft"],
+          "default": "sft",
+          "description": "Type of training to perform: SFT (Supervised Fine-Tuning)"
+        },
+        "log_level": {
+          "type": "string",
+          "enum": ["info", "debug"],
+          "default": "info",
+          "description": "Logging level for the training process"
+        },
+        "filter_overlength_samples": {
+          "type": "boolean",
+          "default": true,
+          "description": "Filter out dataset samples whose input_ids length exceeds max_seq_length"
+        }
+      },
+      "required": ["data_cache_path", "fast_model_args"],
+      "additionalProperties": true
+    },
+    "training_args": {
+      "type": "object",
+      "title": "Training Arguments",
+      "description": "Configuration for Hugging Face TrainingArguments",
+      "properties": {
+        "output_dir": {
+          "type": "string",
+          "default": "saves/loras/",
+          "description": "Output directory for checkpoints and logs"
+        },
+        "per_device_train_batch_size": {
+          "type": "integer",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 128,
+          "description": "Batch size per GPU"
+        },
+        "learning_rate": {
+          "type": "number",
+          "default": 0.0002,
+          "minimum": 1e-6,
+          "maximum": 1.0,
+          "description": "The initial learning rate"
+        },
+        "gradient_accumulation_steps": {
+          "type": "integer",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 1024,
+          "description": "Number of gradient accumulation steps"
+        },
+        "logging_steps": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1,
+          "description": "Log training metrics every N steps"
+        },
+        "num_train_epochs": {
+          "type": "integer",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Total number of training epochs"
+        },
+        "lr_scheduler_type": {
+          "type": "string",
+          "default": "linear",
+          "enum": [
+            "linear", "cosine", "cosine_with_restarts", "polynomial",
+            "constant", "constant_with_warmup", "inverse_sqrt",
+            "reduce_lr_on_plateau"
+          ],
+          "description": "Learning rate scheduler type"
+        },
+        "warmup_steps": {
+          "type": "integer",
+          "default": 10,
+          "minimum": 0,
+          "description": "Warmup steps for LR scheduler"
+        },
+        "save_total_limit": {
+          "type": "integer",
+          "default": 2,
+          "minimum": 1,
+          "description": "Maximum number of checkpoints to keep"
+        },
+        "optim": {
+          "type": "string",
+          "default": "adamw_8bit",
+          "enum": [
+            "adamw_hf", "adamw_torch", "adamw_torch_fused", "adamw_apex_fused",
+            "adamw_anyprecision", "adafactor", "adamw_8bit", "adamw_bnb_8bit",
+            "lion_8bit", "lion_32bit", "paged_adamw_8bit", "paged_adamw_32bit",
+            "paged_lion_8bit", "paged_lion_32bit"
+          ],
+          "description": "Optimizer to use for training"
+        },
+        "weight_decay": {
+          "type": "number",
+          "default": 0.01,
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Weight decay coefficient"
+        },
+        "save_only_model": {
+          "type": "boolean",
+          "default": false,
+          "description": "Save only the model (not optimizer states)"
+        },
+        "resume_from_checkpoint": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Path to checkpoint to resume training from"
+        },
+        "seed": {
+          "type": "integer",
+          "default": 42,
+          "description": "Random seed for reproducibility"
+        },
+        "report_to": {
+          "type": "string",
+          "default": "tensorboard",
+          "enum": ["tensorboard", "wandb", "none"],
+          "description": "Experiment tracking service"
+        },
+        "eval_strategy": {
+          "type": "string",
+          "default": "no",
+          "enum": ["no", "steps", "epoch"],
+          "description": "Evaluation strategy (must be 'no' for multi-GPU)"
+        },
+        "dataset_num_proc": {
+          "type": "integer",
+          "default": 8,
+          "minimum": 1,
+          "description": "Number of processes for dataset operations"
+        }
+      },
+      "additionalProperties": true
+    },
+    "dataset_prep_config": {
+      "type": "object",
+      "title": "Dataset Preparation Configuration",
+      "description": "Configuration for dataset preparation pipeline",
+      "properties": {
+        "tokenizer_name": {
+          "type": "string",
+          "description": "Tokenizer or model identifier/path",
+          "examples": [
+            "unsloth/Qwen2.5-0.5B-Instruct",
+            "unsloth/llama-3.2-1b-instruct"
+          ]
+        },
+        "chat_template": {
+          "type": "string",
+          "default": "chatml",
+          "enum": [
+            "chatml", "qwen-2.5", "llama-3.1", "llama-3.2", "gemma", 
+            "mistral", "phi-3", "zephyr", "vicuna", "alpaca"
+          ],
+          "description": "Chat template name to apply"
+        },
+        "dataset_name": {
+          "type": "string",
+          "description": "HuggingFace dataset repository or path to local JSON/JSONL file",
+          "examples": [
+            "mlabonne/FineTome-100k",
+            "HuggingFaceH4/ultrachat_200k",
+            "./local_dataset.json"
+          ]
+        },
+        "split": {
+          "type": "string",
+          "default": "train",
+          "enum": ["train", "validation", "test"],
+          "description": "Dataset split (for HuggingFace datasets)"
+        },
+        "num_samples": {
+          "type": "integer",
+          "default": -1,
+          "minimum": -1,
+          "description": "Number of samples to process (-1 for all)"
+        },
+        "num_proc": {
+          "type": "integer",
+          "default": 8,
+          "minimum": 1,
+          "description": "Workers for dataset map/tokenization"
+        },
+        "gpus": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1,
+          "description": "Number of GPU shards to create for the dataset"
+        },
+        "output_dir": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Output directory for processed data (auto-computed if null)"
+        },
+        "train_on_target_only": {
+          "type": "boolean",
+          "default": true,
+          "description": "Mask non-assistant tokens (response-only training)"
+        },
+        "instruction_part": {
+          "type": "string",
+          "default": "<|im_start|>user\n",
+          "description": "Marker that begins a user/instruction turn"
+        },
+        "response_part": {
+          "type": "string",
+          "default": "<|im_start|>assistant\n",
+          "description": "Marker that begins an assistant/response turn"
+        },
+        "max_seq_length": {
+          "type": "integer",
+          "default": 4096,
+          "minimum": 128,
+          "maximum": 131072,
+          "description": "Maximum sequence length for tokenization"
+        },
+        "training_type": {
+          "type": "string",
+          "default": "sft",
+          "enum": ["sft"],
+          "description": "The training method (only sft is supported)"
+        },
+        "debug": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "description": "If >0, enable debug mode and dump samples"
+        },
+        "hf_token": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Hugging Face token for accessing gated models/datasets"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "required": ["opensloth_config"],
+  "additionalProperties": true
+}
