@@ -1,4 +1,5 @@
 # export_fp8.py
+# type: ignore
 import argparse
 import warnings
 

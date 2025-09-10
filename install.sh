@@ -19,7 +19,7 @@ curl -sSf https://astral.sh/uv/install.sh | sh
 # source uv 
 uv venv --python 3.11
 uv pip install pip poetry
-pip install unsloth
+uv pip install unsloth
 uv pip install -e ./
 
 pip install -U xformers --index-url https://download.pytorch.org/whl/cu128

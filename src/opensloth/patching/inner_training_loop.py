@@ -1,7 +1,6 @@
+# type: ignore
 from fastcore.all import patch
 from transformers.trainer import *
-
-# from ..opensloth_config import OpenSlothConfig
 
 
 def calculate_token_metrics(input_ids, pad_token_id):

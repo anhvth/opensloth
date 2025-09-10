@@ -1,120 +1,18 @@
 [project]
 name = "opensloth"
-version = "0.1.8"
-description = "A high-performance framework for fine-tuning large language models with multi-GPU support"
-authors = [{ name = "anhvth", email = "anhvth.226@gmail.com" }]
+version = "0.1.0"
+description = "Add your description here"
 readme = "README.md"
-license = { text = "MIT" }
-    requires-python = ">=3.10,<3.11"
-keywords = [
-    "machine learning",
-    "deep learning",
-    "transformers",
-    "fine-tuning",
-    "multi-gpu",
-    "llm",
-]
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "Topic :: Software Development :: Libraries :: Python Modules",
-]
+requires-python = ">=3.11"
 dependencies = [
-    "pyyaml (>=6.0.2,<7.0.0)",
-    "jupyterlab (>=4.3.5,<5.0.0)",
-    "fastcore (>=1.7.29,<2.0.0)",
-    "speedy-utils (>=0.1.20,<0.2.0)",
-    "tensorboard (>=2.19.0,<3.0.0)",
-    "fire (>=0.7.0,<0.8.0)",
-    "tensorboardx (>=2.6.2.2,<3.0.0.0)",
-    "ruff (>=0.12.8,<0.13.0)",
-    "unsloth (>=2025.8.1,<2026.0.0)",
-    "pydantic (>=2.8.0,<3.0.0)",
-    "gradio (>=4.44.0,<5.0.0)",
-    "tabulate (>=0.9.0,<1.0.0)",
-    "typer (>=0.16.0,<0.17.0)",
-    "vllm (>=0.10.0,<0.11.0)",
+    "datasets>=4.0.0",
+    "llmcompressor>=0.6.0",
+    "loguru>=0.7.3",
+    "pydantic>=2.11.7",
+    "speedy-utils>=1.1.17",
+    "tabulate>=0.9.0",
+    "transformers>=4.56.1",
+    "unsloth>=2025.9.4",
+    "unsloth_zoo>=2025.9.5",
+    "vllm>=0.10.1.1",
 ]
-
-[project.urls]
-Homepage = "https://github.com/anhvth/opensloth"
-Repository = "https://github.com/anhvth/opensloth"
-Documentation = "https://github.com/anhvth/opensloth"
-"Bug Tracker" = "https://github.com/anhvth/opensloth/issues"
-
-[project.scripts]
-# New focused CLI commands  
-os-data = "opensloth.cli.os_data:main"
-os-sft = "opensloth.cli.os_sft:main"
-os-dpo = "opensloth.cli.os_dpo:main"
-os-grpo = "opensloth.cli.os_grpo:main"
-# NEW: Unified end-to-end training CLI
-os-train = "opensloth.cli.os_train:main"
-# TMux worker script for multi-GPU training
-os-tmux-worker = "opensloth.scripts.tmux_train_worker:main"
-
-[build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
-
-[tool.poetry]
-name = "opensloth"
-packages = [{ include = "opensloth", from = "src" }]
-
-[tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "TID", "ARG", "PL", "RUF"]
-
-ignore = [
-    # existing
-    "E501",  # line too long (handled by line-length)
-    "E203",  # whitespace before ':' (black compat)
-    "W291",  # trailing whitespace
-    "W293",  # blank line contains whitespace
-    "F403",  # star import
-    "F405",  # star import names
-    "PLC0415",  # non-top-level import (intentional)
-    "PLR0913",  # too many args
-    "F401",     # unused import
-
-    # added to reduce noise for this codebase
-    "PLR2004",  # magic value used in comparison
-    "B008",     # Typer: function call in default (Argument/Option)
-    "UP035",    # prefer builtin generics over typing.* (legacy compat)
-    "B904",     # 'raise from' suggestion
-    "SIM108",   # prefer ternary
-    "SIM102",   # combine nested ifs
-    "PLR0912",  # too many branches
-    "PLR0915",  # too many statements
-    "E721",     # type comparisons with '=='
-    "ARG001",   # unused function argument (framework hooks)
-    "ARG002",   # unused method argument (framework hooks)
-    "PLW0602",  # global but no assignment
-    "PLW0603",  # update global discouraged
-    "B027",     # empty method in ABC without @abstractmethod
-]
-
-[tool.ruff.lint.per-file-ignores]
-# Demo/tests: allow magic numbers & simple style nits
-"demo_*.py" = ["PLR2004", "SIM108"]
-"tests/**" = ["PLR2004", "SIM108", "ARG001", "ARG002"]
-
-# CLI entrypoints: Typer patterns & complexity
-"src/opensloth/cli/*.py" = ["B008", "E721", "PLR0912", "PLR0915", "PLR2004"]
-
-# Patching layers: often long/branchy by design
-"src/opensloth/patching/*.py" = ["PLR0912", "PLR0915", "SIM102", "PLR2004"]
-
-# Distributed comm layer: globals and hook signatures are intentional
-"src/opensloth/comm/*.py" = ["PLW0602", "PLW0603", "ARG002"]
-
-# Dataset prep: permit a few magic-number comparisons & simple style nits
-"src/opensloth/dataset/*.py" = ["PLR2004", "SIM102"]

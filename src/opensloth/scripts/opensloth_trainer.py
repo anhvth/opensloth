@@ -13,7 +13,7 @@ import time
 import warnings
 from typing import Any
 
-from opensloth.logging_config import OpenslothLogger, setup_stdout_interception_for_training
+from opensloth.logging_config import OpenslothLogger
 from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
 
 warnings.filterwarnings("ignore")
@@ -185,29 +185,15 @@ def train_on_single_gpu(
 
     # Only use comm backend for multi-GPU training
     if len(opensloth_config.devices) > 1:
-        backend = getattr(opensloth_config, 'comm_backend', 'allreduce')
-        rank = opensloth_config.devices.index(gpu)
-        if backend == 'async-ps':
-            try:
-                from opensloth.comm.async_ps import AsyncPSCallback, initialize_server_if_rank0
-            except Exception as e:
-                logger.error(f"Failed to import AsyncPS backend: {e}")
-                raise
-            # Initialize server storage on rank 0 (after model created)
-            initialize_server_if_rank0(trainer.model, rank, opensloth_config.async_ps_args)
-            cb = AsyncPSCallback(trainer.model, rank, len(opensloth_config.devices), opensloth_config.async_ps_args)
-            trainer.add_callback(cb)
-            logger.info(f"Using Async Parameter-Server backend for GPU {gpu} (rank {rank})")
-        else:
-            from opensloth.nccl_grad_sync import get_callback_and_setup_method
-            nccl_grad_sync_callback, _setup_nccl, destroy_nccl = get_callback_and_setup_method()
-            grad_sync_cb = nccl_grad_sync_callback(
-                model=trainer.model,
-                gpu=gpu,
-                gpus=opensloth_config.devices,
-            )
-            logger.info(f"Using NCCL gradient sync callback for GPU {gpu}")
-            trainer.add_callback(grad_sync_cb)
+        from opensloth.nccl_grad_sync import get_callback_and_setup_method
+        nccl_grad_sync_callback, _setup_nccl, destroy_nccl = get_callback_and_setup_method()
+        grad_sync_cb = nccl_grad_sync_callback(
+            model=trainer.model,
+            gpu=gpu,
+            gpus=opensloth_config.devices,
+        )
+        logger.info(f"Using NCCL gradient sync callback for GPU {gpu}")
+        trainer.add_callback(grad_sync_cb)
     else:
         logger.info("Single GPU training detected, skipping distributed gradient sync")
 
@@ -225,14 +211,7 @@ def train_on_single_gpu(
         else:
             trainer.train()
     finally:
-        # Ensure RPC shutdown for async-ps backend
-        if len(opensloth_config.devices) > 1 and getattr(opensloth_config, 'comm_backend', 'allreduce') == 'async-ps':
-            try:
-                from opensloth.comm.async_ps import shutdown_rpc
-                logger.info("Shutting down AsyncPS RPC backend ...")
-                shutdown_rpc()
-            except Exception as e:
-                logger.warning(f"RPC shutdown encountered an issue: {e}")
+        pass
     logger.finish_timing("actual_training")
 
     # Save once from rank=0
@@ -255,14 +234,8 @@ def train_on_single_gpu(
         # Log training summary
         logger.log_training_summary()
 
-    # Clean up NCCL process group to avoid resource leak warnings (non async-ps multi-GPU)
-    if len(opensloth_config.devices) > 1 and getattr(opensloth_config, 'comm_backend', 'allreduce') != 'async-ps':
-        try:
-            # destroy_nccl imported above when backend was selected
-            if 'destroy_nccl' in locals():  # type: ignore[truthy-function]
-                destroy_nccl()  # type: ignore[misc]
-        except Exception:
-            pass
+    if 'destroy_nccl' in locals():  # type: ignore[truthy-function]
+        destroy_nccl()  # type: ignore[misc]
 
 
 def load_config_from_path(
@@ -279,7 +252,7 @@ def load_config_from_path(
     elif hasattr(config_module, "opensloth_config"):
         opensloth_config = OpenSlothConfig(**config_module.opensloth_config)
     else:
-        opensloth_config = OpenSlothConfig()
+        raise ValueError("No OpenSloth configuration found")
     # return opensloth_config,
     if hasattr(config_module, "training_config"):
         training_config = config_module.training_config

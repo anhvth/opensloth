@@ -108,19 +108,9 @@ def maybe_hot_fix_gemma(cfg: OpenSlothConfig, logger, tokenizer) -> None:
 def setup_comm_backend(cfg: OpenSlothConfig) -> None:
     if len(cfg.devices) <= 1:
         return
-    backend = getattr(cfg, "comm_backend", "allreduce")
 
-    if backend == "async-ps":
-        from opensloth.comm.async_ps import setup_rpc
-        rank = int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0"))
-        world = len(cfg.devices)
-        rpc_cfg = getattr(cfg, "async_ps_args", None)
-        addr = getattr(rpc_cfg, "master_addr", "127.0.0.1") if rpc_cfg else "127.0.0.1"
-        port = getattr(rpc_cfg, "master_port", "29512") if rpc_cfg else "29512"
-        os.environ.setdefault("MASTER_ADDR", addr)
-        os.environ.setdefault("MASTER_PORT", port)
-        setup_rpc(rank=rank, world_size=world, master_addr=addr, master_port=port)
-    else:
-        from opensloth.nccl_grad_sync import get_callback_and_setup_method
-        _cb, setup_nccl, _destroy = get_callback_and_setup_method()
-        setup_nccl(rank=int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0")), gpus=cfg.devices)
+
+
+    from opensloth.nccl_grad_sync import get_callback_and_setup_method
+    _cb, setup_nccl, _destroy = get_callback_and_setup_method()
+    setup_nccl(rank=int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0")), gpus=cfg.devices)

@@ -18,9 +18,6 @@ import os
 import sys
 import time
 
-from rich.console import Console
-from rich.table import Table
-
 # Duration threshold constants (after imports to satisfy Ruff E402 expectations)
 DURATION_SHORT_SKIP = 3
 DURATION_SECONDS_IN_MINUTE = 60
@@ -67,7 +64,6 @@ class OpenslothLogger:
             raise ValueError(
                 f"Invalid log level: {self.log_level}. Must be one of DEBUG, INFO, WARNING, ERROR, CRITICAL."
             )
-        self.console = Console()
 
         # Timing tracking
         self.step_timers: dict[str, StepTimer] = {}
@@ -223,16 +219,15 @@ class OpenslothLogger:
             return
 
         if self.gpu_id == "0":  # Only master GPU logs summary
-            table = Table(
-                title="[bold green]⏱️  Training Step Timing Summary[/bold green]",
-                show_header=True,
-                header_style="bold magenta",
-            )
-            table.add_column("Step", style="cyan", width=25)
-            table.add_column("Count", style="yellow", width=8)
-            table.add_column("Avg Duration", style="green", width=12)
-            table.add_column("Total Duration", style="blue", width=12)
-            table.add_column("Min/Max", style="magenta", width=15)
+            # Create a simple text-based table
+            print("\n" + "=" * 80)
+            print("⏱️  Training Step Timing Summary")
+            print("=" * 80)
+            
+            # Header
+            header = f"{'Step':<25} {'Count':<8} {'Avg Duration':<12} {'Total Duration':<12} {'Min/Max':<15}"
+            print(header)
+            print("-" * 80)
 
             total_time = 0.0
             for step_name, durations in self.step_durations.items():
@@ -258,26 +253,18 @@ class OpenslothLogger:
                     else:
                         return f"{dur/3600:.1f}h"
 
-                table.add_row(
-                    step_name,
-                    str(count),
-                    format_duration(avg_duration),
-                    format_duration(total_duration),
-                    f"{format_duration(min_duration)}/{format_duration(max_duration)}",
-                )
+                # Print row
+                row = f"{step_name:<25} {count:<8} {format_duration(avg_duration):<12} {format_duration(total_duration):<12} {format_duration(min_duration)}/{format_duration(max_duration):<15}"
+                print(row)
 
             # Add total training time if available
             if self.total_training_start:
                 total_training_time = time.time() - self.total_training_start
-                table.add_row(
-                    "[bold]TOTAL TRAINING[/bold]",
-                    "-",
-                    "-",
-                    f"[bold]{self._format_duration(total_training_time)}[/bold]",
-                    "-",
-                )
-
-            self.console.print(table)
+                print("-" * 80)
+                total_row = f"{'TOTAL TRAINING':<25} {'-':<8} {'-':<12} {self._format_duration(total_training_time):<12} {'-':<15}"
+                print(total_row)
+            
+            print("=" * 80)
 
     def log_step_timing_progress(
         self, step_name: str, current_step: int, total_steps: int
