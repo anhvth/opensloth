@@ -18,3 +18,6 @@ dependencies = [
     "unsloth_zoo>=2025.9.5",
     "vllm>=0.10.1.1",
 ]
+
+[project.scripts]
+opensloth-sft-train = "opensloth.scripts.train:main"

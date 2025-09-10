@@ -181,7 +181,7 @@ def main():
         )
         print(f"   ✓ OpenSlothConfig validation passed")
         
-        # Test TrainingArguments
+        # Test TrainingArguments (now pure Pydantic)
         test_training = TrainingArguments()
         print(f"   ✓ TrainingArguments validation passed")
         
@@ -191,6 +191,10 @@ def main():
             dataset_name="mlabonne/FineTome-100k"
         )
         print(f"   ✓ DatasetPrepConfig validation passed")
+        
+        # Test HF conversion
+        hf_training_args = test_training.to_hf_training_arguments()
+        print(f"   ✓ HuggingFace TrainingArguments conversion passed")
         
         print("\n🎉 Schema generation completed successfully!")
         print("💡 VS Code will now provide IntelliSense for training config files")

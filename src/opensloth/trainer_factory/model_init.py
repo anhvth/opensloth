@@ -12,7 +12,7 @@ from .base import (
     validate_dataset_compatibility,
     validate_dataset_for_type,
 )
-from .dispatcher import create_trainer_by_type
+
 
 
 def _init_model_and_tokenizer(cfg: OpenSlothConfig, unsloth_modules: dict[str, Any] | None = None):
@@ -102,9 +102,9 @@ def _configure_reporting(hf_args: TrainingArguments) -> None:
     if rank != 0:
         hf_args.report_to = "none"
 
-
+from .constructors import create_sft_trainer
 def _create_trainer(model, tokenizer, cfg: OpenSlothConfig, hf_args: TrainingArguments):
-    trainer = create_trainer_by_type(model, tokenizer, _load_dataset(cfg, hf_args), cfg, hf_args)
+    trainer = create_sft_trainer(model, tokenizer, _load_dataset(cfg, hf_args), cfg, hf_args)
     _configure_reporting(hf_args)
     if cfg.training_type == "sft":
         from opensloth.patching.inner_training_loop import (

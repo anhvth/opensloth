@@ -65,17 +65,17 @@ def main():
         sys.exit(1)
     
     # Validate device count matches dataset shards
-    devices = args.devices.split(',')
-    num_shards = dataset_config.get('num_shards', 1)
+    # devices = args.devices.split(',')
+    # num_shards = dataset_config.get('num_shards', 1)
     
-    if len(devices) != num_shards:
-        print(f"❌ Error: Number of devices ({len(devices)}) must match number of dataset shards ({num_shards})")
-        print(f"💡 Use --devices with {num_shards} GPU(s), e.g., --devices 0,1")
-        sys.exit(1)
+    # if len(devices) != num_shards:
+    #     print(f"❌ Error: Number of devices ({len(devices)}) must match number of dataset shards ({num_shards})")
+    #     print(f"💡 Use --devices with {num_shards} GPU(s), e.g., --devices 0,1")
+    #     sys.exit(1)
     
     # Override device configuration with user input
-    training_config['opensloth_config']['devices'] = [int(d.strip()) for d in devices]
-    training_config['opensloth_config']['data_cache_path'] = str(dataset_path.absolute())
+    # training_config['opensloth_config']['devices'] = [int(d.strip()) for d in devices]
+    # training_config['opensloth_config']['data_cache_path'] = str(dataset_path.absolute())
     
     # Generate output directory based on dataset name and timestamp
     from datetime import datetime
@@ -83,6 +83,7 @@ def main():
     model_short = training_config['opensloth_config']['fast_model_args']['model_name'].split("/")[-1].replace("-", "_").lower()
     dataset_short = dataset_path.name.replace("-", "_").lower()
     output_dir = f"outputs/sft_{model_short}_{dataset_short}_{timestamp}"
+    print(f"ℹ️ Output directory set to: {output_dir}")
     training_config['training_args']['output_dir'] = output_dir
     
     # Create Pydantic objects

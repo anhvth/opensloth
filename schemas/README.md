@@ -45,10 +45,10 @@ Create a `training_config.json` file and VS Code will automatically provide:
 {
   "$schema": "./schemas/training_config.schema.json",
   "opensloth_config": {
-    "data_cache_path": "...",  // ← Auto-completion appears here
+    "data_cache_path": "...", // ← Auto-completion appears here
     "fast_model_args": {
-      "model_name": "...",     // ← Suggestions for model names
-      "optim": "..."          // ← Enum values like "adamw_8bit"
+      "model_name": "...", // ← Suggestions for model names
+      "optim": "..." // ← Enum values like "adamw_8bit"
     }
   }
 }

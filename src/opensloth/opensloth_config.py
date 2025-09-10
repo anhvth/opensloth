@@ -259,7 +259,6 @@ class DatasetPrepConfig(BaseModel):
 
 
 
-
 class TrainingArguments(BaseModel):
     """Configuration for Hugging Face TrainingArguments."""
 
@@ -290,3 +289,16 @@ class TrainingArguments(BaseModel):
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for TrainingArguments initialization."""
         return self.model_dump()
+    
+    def to_hf_training_arguments(self):
+        """Convert to HuggingFace TrainingArguments instance."""
+        from transformers import TrainingArguments as HfTrainingArguments
+        
+        # Get the model data and filter out fields that don't exist in HF TrainingArguments
+        data = self.model_dump()
+        
+        # Remove OpenSloth-specific fields that aren't in HF TrainingArguments
+        opensloth_specific_fields = {'dataset_num_proc'}
+        filtered_data = {k: v for k, v in data.items() if k not in opensloth_specific_fields}
+        
+        return HfTrainingArguments(**filtered_data)

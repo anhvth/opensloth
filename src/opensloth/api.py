@@ -17,7 +17,7 @@ from opensloth.opensloth_config import (
     OpenSlothConfig,
     TrainingArguments,
 )
-from opensloth.scripts.opensloth_trainer import (
+from opensloth.trainer_factory.opensloth_trainer import (
     run_mp_training,
     run_tmux_training,
     setup_envs,
@@ -69,7 +69,7 @@ def _generate_training_script(
 # =============================================================================
 
 from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
-from opensloth.scripts.opensloth_trainer import setup_envs, run_mp_training
+from opensloth.trainer_factory.opensloth_trainer import setup_envs, run_mp_training
 
 # --- Configuration Dictionaries ---
 
