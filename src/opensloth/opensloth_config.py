@@ -112,14 +112,6 @@ class OpenSlothConfig(BaseModel):
         description="Disable packing of sequences for training",
     )
 
-
-    
-    # Training type - only SFT supported
-    training_type: Literal["sft"] = Field(
-        default="sft",
-        description="Type of training to perform: SFT (Supervised Fine-Tuning)",
-    )
-
     log_level: Literal["info", "debug"] = Field(
         default="info",
         description="Logging level for the training process",
@@ -164,6 +156,10 @@ class OpenSlothConfig(BaseModel):
                     stacklevel=2
                 )
                 self.lora_args = None
+
+        # Training type validation - only SFT is supported
+        if self.training_type != "sft":
+            raise ValueError(f"Only 'sft' training type is supported, got: {self.training_type}")
 
         # Training type validation - only SFT is supported
         if self.training_type != "sft":
@@ -235,11 +231,6 @@ class DatasetPrepConfig(BaseModel):
         4096,
         description="Maximum sequence length for tokenization.",
         json_schema_extra={"cli_alias": "max-seq-length"},
-    )
-    training_type: str = Field(
-        "sft",
-        description="The training method (only sft is supported).",
-        json_schema_extra={"hidden": True},
     )
 
     # Debug

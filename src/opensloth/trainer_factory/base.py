@@ -8,20 +8,13 @@ from opensloth.logging_config import get_opensloth_logger
 from opensloth.opensloth_config import OpenSlothConfig
 
 
-def ensure_dataset_features(dataset, required: list[str], training_type: str) -> None:
+def ensure_dataset_features(dataset, required: list[str]) -> None:
     feats = getattr(dataset, "features", None)
     if feats is None:
-        raise ValueError(f"Dataset missing features for training_type={training_type}")
+        raise ValueError("Dataset missing features for SFT training")
     missing = [c for c in required if c not in feats]
     if missing:
-        raise ValueError(f"Dataset missing required columns {missing} for {training_type}")
-
-
-def validate_dataset_for_type(dataset, training_type: str) -> None:
-    if training_type == "sft":
-        ensure_dataset_features(dataset, ["input_ids", "labels"], training_type)
-    else:
-        raise ValueError(f"Unsupported training_type for validation: {training_type}")
+        raise ValueError(f"Dataset missing required columns {missing} for SFT training")
 
 
 def validate_dataset_compatibility(dataset_path: str, model_max_seq_length: int) -> None:

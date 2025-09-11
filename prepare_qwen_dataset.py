@@ -50,7 +50,7 @@ def prepare_qwen_dataset():
     # Processing args
     parser.add_argument('--num_samples', '-n', type=int, default=-1,
                        help='Number of samples to process (use -1 for all)')
-    parser.add_argument('--num_proc', '-wk', type=int, default=8,
+    parser.add_argument('--num_proc', '-wk', type=int, default=16,
                        help='Number of processes for mapping')
     parser.add_argument('--output_dir', '-o', type=str, default=None,
                        help='Output directory for the processed dataset')
@@ -58,9 +58,9 @@ def prepare_qwen_dataset():
                        help='Number of shards (GPUs) to pre-split the dataset for')
     
     # Training configuration
-    parser.add_argument('--max_seq_length', type=int, default=4096,
+    parser.add_argument('--max_seq_length','-l', type=int, default=16096,
                        help='Maximum sequence length for tokenization')
-    parser.add_argument('--train_on_target_only', action='store_true', default=True,
+    parser.add_argument('--train_on_target_only', action='store_true', default=False,
                        help='Whether to mask non-assistant tokens for response-only training')
     parser.add_argument('--instruction_part', type=str, default='<|im_start|>user\n',
                        help='Instruction part string')
@@ -371,7 +371,6 @@ def prepare_qwen_dataset():
                     },
                     "pretrained_lora": None,
                     "sequence_packing": True,
-                    "training_type": "sft",
                     "log_level": "info",
                     "filter_overlength_samples": True
                 },
@@ -407,7 +406,6 @@ def prepare_qwen_dataset():
                     "instruction_part": args.instruction_part if args.train_on_target_only else None,
                     "response_part": args.response_part if args.train_on_target_only else None,
                     "max_seq_length": args.max_seq_length,
-                    "training_type": "sft",
                     "debug": args.debug,
                     "hf_token": None
                 }

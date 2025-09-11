@@ -7,6 +7,7 @@ so VS Code (or other editors) can provide IntelliSense + validation.
 import json
 from transformers import TrainingArguments
 from pydantic.dataclasses import dataclass
+from pydantic import TypeAdapter
 
 
 # Wrap Hugging Face TrainingArguments with Pydantic
@@ -16,11 +17,9 @@ class TrainingArgsSchema(TrainingArguments):
 
 
 def main():
-    # Ensure the underlying model is fully built
-    TrainingArgsSchema.__pydantic_model__.model_rebuild()
-
-    # Export JSON Schema
-    schema = TrainingArgsSchema.__pydantic_model__.model_json_schema()
+    # Export JSON Schema using TypeAdapter
+    adapter = TypeAdapter(TrainingArgsSchema)
+    schema = adapter.json_schema()
 
     out_file = "training_args.schema.json"
     with open(out_file, "w") as f:

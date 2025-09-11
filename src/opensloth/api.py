@@ -7,7 +7,10 @@ import os
 import pprint
 import subprocess
 import sys
-import tempfile
+im        # Backwards compatibility - assume it's already a dict
+        config_dict = config
+
+    from opensloth.dataset import GemmaDatasetPreparer, QwenDatasetPreparertempfile
 import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING, Tuple

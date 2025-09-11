@@ -5,9 +5,7 @@ Public entrypoints:
 
 Internal structure:
 - base.py: shared validation & utilities
-- constructors.py: individual _create_*_trainer functions
 - model_init.py: model/tokenizer initialization and comm backend
-- dispatcher.py: mapping training_type -> constructor
 """
 from .model_init import setup_model_and_training  # re-export for external use
 

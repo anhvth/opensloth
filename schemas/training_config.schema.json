@@ -207,13 +207,6 @@
           "title": "Sequence Packing",
           "type": "boolean"
         },
-        "training_type": {
-          "const": "sft",
-          "default": "sft",
-          "description": "Type of training to perform: SFT (Supervised Fine-Tuning)",
-          "title": "Training Type",
-          "type": "string"
-        },
         "log_level": {
           "default": "info",
           "description": "Logging level for the training process",
@@ -239,53 +232,378 @@
       "type": "object"
     },
     "training_args": {
-      "additionalProperties": true,
-      "description": "Configuration for Hugging Face TrainingArguments.",
-      "properties": {
-        "output_dir": {
-          "cli_alias": "output",
-          "default": "saves/loras/",
-          "description": "Output directory for checkpoints and logs.",
-          "title": "Output Dir",
+      "$defs": {
+        "DebugOption": {
+          "enum": [
+            "underflow_overflow",
+            "tpu_metrics_debug"
+          ],
+          "title": "DebugOption",
           "type": "string"
         },
+        "FSDPOption": {
+          "enum": [
+            "full_shard",
+            "shard_grad_op",
+            "no_shard",
+            "hybrid_shard",
+            "hybrid_shard_zero2",
+            "offload",
+            "auto_wrap"
+          ],
+          "title": "FSDPOption",
+          "type": "string"
+        },
+        "HubStrategy": {
+          "enum": [
+            "end",
+            "every_save",
+            "checkpoint",
+            "all_checkpoints"
+          ],
+          "title": "HubStrategy",
+          "type": "string"
+        },
+        "IntervalStrategy": {
+          "enum": [
+            "no",
+            "steps",
+            "epoch"
+          ],
+          "title": "IntervalStrategy",
+          "type": "string"
+        },
+        "OptimizerNames": {
+          "description": "Stores the acceptable string identifiers for optimizers.",
+          "enum": [
+            "adamw_torch",
+            "adamw_torch_fused",
+            "adamw_torch_xla",
+            "adamw_torch_npu_fused",
+            "adamw_apex_fused",
+            "adafactor",
+            "adamw_anyprecision",
+            "adamw_torch_4bit",
+            "adamw_torch_8bit",
+            "ademamix",
+            "sgd",
+            "adagrad",
+            "adamw_bnb_8bit",
+            "adamw_8bit",
+            "ademamix_8bit",
+            "lion_8bit",
+            "lion_32bit",
+            "paged_adamw_32bit",
+            "paged_adamw_8bit",
+            "paged_ademamix_32bit",
+            "paged_ademamix_8bit",
+            "paged_lion_32bit",
+            "paged_lion_8bit",
+            "rmsprop",
+            "rmsprop_bnb",
+            "rmsprop_bnb_8bit",
+            "rmsprop_bnb_32bit",
+            "galore_adamw",
+            "galore_adamw_8bit",
+            "galore_adafactor",
+            "galore_adamw_layerwise",
+            "galore_adamw_8bit_layerwise",
+            "galore_adafactor_layerwise",
+            "lomo",
+            "adalomo",
+            "grokadamw",
+            "schedule_free_radam",
+            "schedule_free_adamw",
+            "schedule_free_sgd",
+            "apollo_adamw",
+            "apollo_adamw_layerwise",
+            "stable_adamw"
+          ],
+          "title": "OptimizerNames",
+          "type": "string"
+        },
+        "ParallelismConfig": {
+          "properties": {
+            "dp_replicate_size": {
+              "default": null,
+              "title": "Dp Replicate Size",
+              "type": "integer"
+            },
+            "dp_shard_size": {
+              "default": null,
+              "title": "Dp Shard Size",
+              "type": "integer"
+            },
+            "tp_size": {
+              "default": null,
+              "title": "Tp Size",
+              "type": "integer"
+            },
+            "cp_size": {
+              "default": null,
+              "title": "Cp Size",
+              "type": "integer"
+            },
+            "tp_handler": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TorchTensorParallelConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "cp_handler": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TorchContextParallelConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "title": "ParallelismConfig",
+          "type": "object"
+        },
+        "SaveStrategy": {
+          "enum": [
+            "no",
+            "steps",
+            "epoch",
+            "best"
+          ],
+          "title": "SaveStrategy",
+          "type": "string"
+        },
+        "SchedulerType": {
+          "description": "Scheduler names for the parameter `lr_scheduler_type` in [`TrainingArguments`].\nBy default, it uses \"linear\". Internally, this retrieves `get_linear_schedule_with_warmup` scheduler from [`Trainer`].\nScheduler types:\n   - \"linear\" = get_linear_schedule_with_warmup\n   - \"cosine\" = get_cosine_schedule_with_warmup\n   - \"cosine_with_restarts\" = get_cosine_with_hard_restarts_schedule_with_warmup\n   - \"polynomial\" = get_polynomial_decay_schedule_with_warmup\n   - \"constant\" =  get_constant_schedule\n   - \"constant_with_warmup\" = get_constant_schedule_with_warmup\n   - \"inverse_sqrt\" = get_inverse_sqrt_schedule\n   - \"reduce_lr_on_plateau\" = get_reduce_on_plateau_schedule\n   - \"cosine_with_min_lr\" = get_cosine_with_min_lr_schedule_with_warmup\n   - \"warmup_stable_decay\" = get_wsd_schedule",
+          "enum": [
+            "linear",
+            "cosine",
+            "cosine_with_restarts",
+            "polynomial",
+            "constant",
+            "constant_with_warmup",
+            "inverse_sqrt",
+            "reduce_lr_on_plateau",
+            "cosine_with_min_lr",
+            "cosine_warmup_with_min_lr",
+            "warmup_stable_decay"
+          ],
+          "title": "SchedulerType",
+          "type": "string"
+        },
+        "TorchContextParallelConfig": {
+          "properties": {
+            "cp_comm_strategy": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cp Comm Strategy"
+            }
+          },
+          "title": "TorchContextParallelConfig",
+          "type": "object"
+        },
+        "TorchTensorParallelConfig": {
+          "properties": {
+            "enable_async_tp": {
+              "default": false,
+              "title": "Enable Async Tp",
+              "type": "boolean"
+            }
+          },
+          "title": "TorchTensorParallelConfig",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "output_dir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Dir"
+        },
+        "overwrite_output_dir": {
+          "default": false,
+          "title": "Overwrite Output Dir",
+          "type": "boolean"
+        },
+        "do_train": {
+          "default": false,
+          "title": "Do Train",
+          "type": "boolean"
+        },
+        "do_eval": {
+          "default": false,
+          "title": "Do Eval",
+          "type": "boolean"
+        },
+        "do_predict": {
+          "default": false,
+          "title": "Do Predict",
+          "type": "boolean"
+        },
+        "eval_strategy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IntervalStrategy"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": "no",
+          "title": "Eval Strategy"
+        },
+        "prediction_loss_only": {
+          "default": false,
+          "title": "Prediction Loss Only",
+          "type": "boolean"
+        },
         "per_device_train_batch_size": {
-          "cli_alias": "bs",
           "default": 8,
-          "description": "Batch size per GPU.",
           "title": "Per Device Train Batch Size",
           "type": "integer"
         },
-        "learning_rate": {
-          "cli_alias": "lr",
-          "default": 0.0002,
-          "description": "The initial learning rate.",
-          "title": "Learning Rate",
-          "type": "number"
+        "per_device_eval_batch_size": {
+          "default": 8,
+          "title": "Per Device Eval Batch Size",
+          "type": "integer"
+        },
+        "per_gpu_train_batch_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Per Gpu Train Batch Size"
+        },
+        "per_gpu_eval_batch_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Per Gpu Eval Batch Size"
         },
         "gradient_accumulation_steps": {
-          "cli_alias": "grad-accum",
-          "default": 4,
-          "description": "Number of gradient accumulation steps.",
+          "default": 1,
           "title": "Gradient Accumulation Steps",
           "type": "integer"
         },
-        "logging_steps": {
-          "default": 1,
-          "title": "Logging Steps",
-          "type": "integer"
+        "eval_accumulation_steps": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Eval Accumulation Steps"
+        },
+        "eval_delay": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 0,
+          "title": "Eval Delay"
+        },
+        "torch_empty_cache_steps": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Torch Empty Cache Steps"
+        },
+        "learning_rate": {
+          "default": 5e-05,
+          "title": "Learning Rate",
+          "type": "number"
+        },
+        "weight_decay": {
+          "default": 0.0,
+          "title": "Weight Decay",
+          "type": "number"
+        },
+        "adam_beta1": {
+          "default": 0.9,
+          "title": "Adam Beta1",
+          "type": "number"
+        },
+        "adam_beta2": {
+          "default": 0.999,
+          "title": "Adam Beta2",
+          "type": "number"
+        },
+        "adam_epsilon": {
+          "default": 1e-08,
+          "title": "Adam Epsilon",
+          "type": "number"
+        },
+        "max_grad_norm": {
+          "default": 1.0,
+          "title": "Max Grad Norm",
+          "type": "number"
         },
         "num_train_epochs": {
-          "cli_alias": "epochs",
-          "default": 3,
-          "description": "Total number of training epochs.",
+          "default": 3.0,
           "title": "Num Train Epochs",
+          "type": "number"
+        },
+        "max_steps": {
+          "default": -1,
+          "title": "Max Steps",
           "type": "integer"
         },
         "lr_scheduler_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SchedulerType"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": "linear",
           "title": "Lr Scheduler Type",
-          "type": "string",
           "enum": [
             "linear",
             "cosine",
@@ -297,22 +615,515 @@
             "reduce_lr_on_plateau"
           ]
         },
+        "lr_scheduler_kwargs": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Lr Scheduler Kwargs"
+        },
+        "warmup_ratio": {
+          "default": 0.0,
+          "title": "Warmup Ratio",
+          "type": "number"
+        },
         "warmup_steps": {
-          "cli_alias": "warmup",
-          "default": 10,
-          "description": "Warmup steps for LR scheduler.",
+          "default": 0,
           "title": "Warmup Steps",
           "type": "integer"
         },
+        "log_level": {
+          "default": "passive",
+          "title": "Log Level",
+          "type": "string"
+        },
+        "log_level_replica": {
+          "default": "warning",
+          "title": "Log Level Replica",
+          "type": "string"
+        },
+        "log_on_each_node": {
+          "default": true,
+          "title": "Log On Each Node",
+          "type": "boolean"
+        },
+        "logging_dir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Logging Dir"
+        },
+        "logging_strategy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IntervalStrategy"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": "steps",
+          "title": "Logging Strategy"
+        },
+        "logging_first_step": {
+          "default": false,
+          "title": "Logging First Step",
+          "type": "boolean"
+        },
+        "logging_steps": {
+          "default": 500,
+          "title": "Logging Steps",
+          "type": "number"
+        },
+        "logging_nan_inf_filter": {
+          "default": true,
+          "title": "Logging Nan Inf Filter",
+          "type": "boolean"
+        },
+        "save_strategy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SaveStrategy"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": "steps",
+          "title": "Save Strategy"
+        },
+        "save_steps": {
+          "default": 500,
+          "title": "Save Steps",
+          "type": "number"
+        },
         "save_total_limit": {
-          "default": 2,
-          "title": "Save Total Limit",
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Save Total Limit"
+        },
+        "save_safetensors": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": true,
+          "title": "Save Safetensors"
+        },
+        "save_on_each_node": {
+          "default": false,
+          "title": "Save On Each Node",
+          "type": "boolean"
+        },
+        "save_only_model": {
+          "default": false,
+          "title": "Save Only Model",
+          "type": "boolean"
+        },
+        "restore_callback_states_from_checkpoint": {
+          "default": false,
+          "title": "Restore Callback States From Checkpoint",
+          "type": "boolean"
+        },
+        "no_cuda": {
+          "default": false,
+          "title": "No Cuda",
+          "type": "boolean"
+        },
+        "use_cpu": {
+          "default": false,
+          "title": "Use Cpu",
+          "type": "boolean"
+        },
+        "use_mps_device": {
+          "default": false,
+          "title": "Use Mps Device",
+          "type": "boolean"
+        },
+        "seed": {
+          "default": 42,
+          "title": "Seed",
           "type": "integer"
         },
+        "data_seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data Seed"
+        },
+        "jit_mode_eval": {
+          "default": false,
+          "title": "Jit Mode Eval",
+          "type": "boolean"
+        },
+        "use_ipex": {
+          "default": false,
+          "title": "Use Ipex",
+          "type": "boolean"
+        },
+        "bf16": {
+          "default": false,
+          "title": "Bf16",
+          "type": "boolean"
+        },
+        "fp16": {
+          "default": false,
+          "title": "Fp16",
+          "type": "boolean"
+        },
+        "fp16_opt_level": {
+          "default": "O1",
+          "title": "Fp16 Opt Level",
+          "type": "string"
+        },
+        "half_precision_backend": {
+          "default": "auto",
+          "title": "Half Precision Backend",
+          "type": "string"
+        },
+        "bf16_full_eval": {
+          "default": false,
+          "title": "Bf16 Full Eval",
+          "type": "boolean"
+        },
+        "fp16_full_eval": {
+          "default": false,
+          "title": "Fp16 Full Eval",
+          "type": "boolean"
+        },
+        "tf32": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tf32"
+        },
+        "local_rank": {
+          "default": -1,
+          "title": "Local Rank",
+          "type": "integer"
+        },
+        "ddp_backend": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ddp Backend"
+        },
+        "tpu_num_cores": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tpu Num Cores"
+        },
+        "tpu_metrics_debug": {
+          "default": false,
+          "title": "Tpu Metrics Debug",
+          "type": "boolean"
+        },
+        "debug": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/DebugOption"
+              },
+              "type": "array"
+            }
+          ],
+          "default": "",
+          "title": "Debug"
+        },
+        "dataloader_drop_last": {
+          "default": false,
+          "title": "Dataloader Drop Last",
+          "type": "boolean"
+        },
+        "eval_steps": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Eval Steps"
+        },
+        "dataloader_num_workers": {
+          "default": 0,
+          "title": "Dataloader Num Workers",
+          "type": "integer"
+        },
+        "dataloader_prefetch_factor": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dataloader Prefetch Factor"
+        },
+        "past_index": {
+          "default": -1,
+          "title": "Past Index",
+          "type": "integer"
+        },
+        "run_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Name"
+        },
+        "disable_tqdm": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Disable Tqdm"
+        },
+        "remove_unused_columns": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": true,
+          "title": "Remove Unused Columns"
+        },
+        "label_names": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label Names"
+        },
+        "load_best_model_at_end": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Load Best Model At End"
+        },
+        "metric_for_best_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metric For Best Model"
+        },
+        "greater_is_better": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Greater Is Better"
+        },
+        "ignore_data_skip": {
+          "default": false,
+          "title": "Ignore Data Skip",
+          "type": "boolean"
+        },
+        "fsdp": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/FSDPOption"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "",
+          "title": "Fsdp"
+        },
+        "fsdp_min_num_params": {
+          "default": 0,
+          "title": "Fsdp Min Num Params",
+          "type": "integer"
+        },
+        "fsdp_config": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fsdp Config"
+        },
+        "fsdp_transformer_layer_cls_to_wrap": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fsdp Transformer Layer Cls To Wrap"
+        },
+        "accelerator_config": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Accelerator Config"
+        },
+        "parallelism_config": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ParallelismConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "deepspeed": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Deepspeed"
+        },
+        "label_smoothing_factor": {
+          "default": 0.0,
+          "title": "Label Smoothing Factor",
+          "type": "number"
+        },
         "optim": {
-          "default": "adamw_8bit",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OptimizerNames"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": "adamw_torch",
           "title": "Optim",
-          "type": "string",
           "enum": [
             "adamw_hf",
             "adamw_torch",
@@ -330,14 +1141,117 @@
             "paged_lion_32bit"
           ]
         },
-        "weight_decay": {
-          "default": 0.01,
-          "title": "Weight Decay",
-          "type": "number"
+        "optim_args": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Optim Args"
         },
-        "save_only_model": {
+        "adafactor": {
           "default": false,
-          "title": "Save Only Model",
+          "title": "Adafactor",
+          "type": "boolean"
+        },
+        "group_by_length": {
+          "default": false,
+          "title": "Group By Length",
+          "type": "boolean"
+        },
+        "length_column_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "length",
+          "title": "Length Column Name"
+        },
+        "report_to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Report To"
+        },
+        "ddp_find_unused_parameters": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ddp Find Unused Parameters"
+        },
+        "ddp_bucket_cap_mb": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ddp Bucket Cap Mb"
+        },
+        "ddp_broadcast_buffers": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ddp Broadcast Buffers"
+        },
+        "dataloader_pin_memory": {
+          "default": true,
+          "title": "Dataloader Pin Memory",
+          "type": "boolean"
+        },
+        "dataloader_persistent_workers": {
+          "default": false,
+          "title": "Dataloader Persistent Workers",
+          "type": "boolean"
+        },
+        "skip_memory_metrics": {
+          "default": true,
+          "title": "Skip Memory Metrics",
+          "type": "boolean"
+        },
+        "use_legacy_prediction_loop": {
+          "default": false,
+          "title": "Use Legacy Prediction Loop",
+          "type": "boolean"
+        },
+        "push_to_hub": {
+          "default": false,
+          "title": "Push To Hub",
           "type": "boolean"
         },
         "resume_from_checkpoint": {
@@ -352,33 +1266,345 @@
           "default": null,
           "title": "Resume From Checkpoint"
         },
-        "seed": {
-          "default": 42,
-          "title": "Seed",
-          "type": "integer"
-        },
-        "report_to": {
-          "default": "tensorboard",
-          "enum": [
-            "tensorboard",
-            "wandb",
-            "none"
+        "hub_model_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
-          "title": "Report To",
+          "default": null,
+          "title": "Hub Model Id"
+        },
+        "hub_strategy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HubStrategy"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": "every_save",
+          "title": "Hub Strategy"
+        },
+        "hub_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hub Token"
+        },
+        "hub_private_repo": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hub Private Repo"
+        },
+        "hub_always_push": {
+          "default": false,
+          "title": "Hub Always Push",
+          "type": "boolean"
+        },
+        "hub_revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hub Revision"
+        },
+        "gradient_checkpointing": {
+          "default": false,
+          "title": "Gradient Checkpointing",
+          "type": "boolean"
+        },
+        "gradient_checkpointing_kwargs": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gradient Checkpointing Kwargs"
+        },
+        "include_inputs_for_metrics": {
+          "default": false,
+          "title": "Include Inputs For Metrics",
+          "type": "boolean"
+        },
+        "include_for_metrics": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Include For Metrics",
+          "type": "array"
+        },
+        "eval_do_concat_batches": {
+          "default": true,
+          "title": "Eval Do Concat Batches",
+          "type": "boolean"
+        },
+        "fp16_backend": {
+          "default": "auto",
+          "title": "Fp16 Backend",
           "type": "string"
         },
-        "eval_strategy": {
-          "default": "no",
-          "title": "Eval Strategy",
-          "type": "string"
+        "push_to_hub_model_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Push To Hub Model Id"
         },
-        "dataset_num_proc": {
-          "default": 52,
-          "title": "Dataset Num Proc",
+        "push_to_hub_organization": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Push To Hub Organization"
+        },
+        "push_to_hub_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Push To Hub Token"
+        },
+        "_n_gpu": {
+          "default": -1,
+          "title": "N Gpu",
           "type": "integer"
+        },
+        "mp_parameters": {
+          "default": "",
+          "title": "Mp Parameters",
+          "type": "string"
+        },
+        "auto_find_batch_size": {
+          "default": false,
+          "title": "Auto Find Batch Size",
+          "type": "boolean"
+        },
+        "full_determinism": {
+          "default": false,
+          "title": "Full Determinism",
+          "type": "boolean"
+        },
+        "torchdynamo": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Torchdynamo"
+        },
+        "ray_scope": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "last",
+          "title": "Ray Scope"
+        },
+        "ddp_timeout": {
+          "default": 1800,
+          "title": "Ddp Timeout",
+          "type": "integer"
+        },
+        "torch_compile": {
+          "default": false,
+          "title": "Torch Compile",
+          "type": "boolean"
+        },
+        "torch_compile_backend": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Torch Compile Backend"
+        },
+        "torch_compile_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Torch Compile Mode"
+        },
+        "include_tokens_per_second": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Include Tokens Per Second"
+        },
+        "include_num_input_tokens_seen": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Include Num Input Tokens Seen"
+        },
+        "neftune_noise_alpha": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Neftune Noise Alpha"
+        },
+        "optim_target_modules": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Optim Target Modules"
+        },
+        "batch_eval_metrics": {
+          "default": false,
+          "title": "Batch Eval Metrics",
+          "type": "boolean"
+        },
+        "eval_on_start": {
+          "default": false,
+          "title": "Eval On Start",
+          "type": "boolean"
+        },
+        "use_liger_kernel": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Use Liger Kernel"
+        },
+        "liger_kernel_config": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "boolean"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Liger Kernel Config"
+        },
+        "eval_use_gather_object": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Eval Use Gather Object"
+        },
+        "average_tokens_across_devices": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": true,
+          "title": "Average Tokens Across Devices"
         }
       },
-      "title": "TrainingArguments",
+      "title": "TrainingArgsSchema",
       "type": "object"
     },
     "dataset_prep_config": {
@@ -485,13 +1711,6 @@
           "description": "Maximum sequence length for tokenization.",
           "title": "Max Seq Length",
           "type": "integer"
-        },
-        "training_type": {
-          "default": "sft",
-          "description": "The training method (only sft is supported).",
-          "hidden": true,
-          "title": "Training Type",
-          "type": "string"
         },
         "debug": {
           "default": 0,

@@ -23,18 +23,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from pydantic import BaseModel
 
-try:
-    from opensloth.opensloth_config import (
-        OpenSlothConfig,
-        TrainingArguments, 
-        DatasetPrepConfig,
-        FastModelArgs,
-        LoraArgs
-    )
-except ImportError as e:
-    print(f"❌ Error importing OpenSloth modules: {e}")
-    print("Make sure you're running this from the project root directory.")
-    sys.exit(1)
+from opensloth.opensloth_config import (
+    OpenSlothConfig,
+    TrainingArguments, 
+    DatasetPrepConfig,
+    FastModelArgs,
+    LoraArgs
+)
 
 
 def enhance_schema_with_examples(schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -118,7 +113,21 @@ def create_combined_schema() -> Dict[str, Any]:
     
     # Get individual schemas
     opensloth_schema = OpenSlothConfig.model_json_schema()
-    training_args_schema = TrainingArguments.model_json_schema()
+    # training_args_schema = TrainingArguments.model_json_schema()
+    from transformers import TrainingArguments
+    from pydantic.dataclasses import dataclass
+    from pydantic import TypeAdapter
+
+
+    # Wrap Hugging Face TrainingArguments with Pydantic
+    @dataclass
+    class TrainingArgsSchema(TrainingArguments):
+        pass
+
+
+    adapter = TypeAdapter(TrainingArgsSchema)
+    training_args_schema = adapter.json_schema()
+
     dataset_prep_schema = DatasetPrepConfig.model_json_schema()
     
     # Create the main combined schema
