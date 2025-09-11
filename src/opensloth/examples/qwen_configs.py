@@ -4,82 +4,80 @@ Qwen model configuration examples for dataset preparation and training.
 
 from typing import Dict, Any
 
-
-# Base Qwen configuration
-QWEN_BASE_CONFIG = {
-    "tokenizer_name": 'unsloth/Qwen2.5-0.5B-Instruct',
-    "chat_template": "qwen-2.5",
-    "dataset_name": 'mlabonne/FineTome-100k',
-    "input_file": None,
-    "split": 'train',
-    "num_samples": -1,
-    "num_proc": 16,
-    "output_dir": None,
-    "gpus": 1,
-    "max_seq_length": 16096,
-    "train_on_target_only": False,
-    "instruction_part": '<|im_start|>user\n',
-    "response_part": '<|im_start|>assistant\n',
-    "debug": 0,
-}
+from ..opensloth_config import DatasetPrepConfig
 
 
-def qwen_config_1gpu(**overrides) -> Dict[str, Any]:
+# Base Qwen configuration using Pydantic model
+def _base_qwen_config(**overrides) -> DatasetPrepConfig:
+    """Base configuration for Qwen models with common defaults."""
+    # Create Pydantic object directly with defaults, no intermediate dict
+    return DatasetPrepConfig(
+        tokenizer_name='unsloth/Qwen2.5-0.5B-Instruct',
+        chat_template="qwen-2.5",
+        dataset_name='mlabonne/FineTome-100k',
+        split='train',
+        num_samples=-1,
+        num_proc=16,
+        output_dir=None,
+        gpus=1,
+        max_seq_length=16096,
+        train_on_target_only=False,
+        instruction_part='<|im_start|>user\n',
+        response_part='<|im_start|>assistant\n',
+        debug=0,
+        **overrides  # Allow overrides of any defaults
+    )
+
+
+def qwen_config_1gpu(**overrides) -> DatasetPrepConfig:
     """Configuration for single GPU training."""
-    config = QWEN_BASE_CONFIG.copy()
-    config.update({
-        "gpus": 1,
-        "num_proc": 8,
-    })
-    config.update(overrides)
-    return config
+    return _base_qwen_config(
+        gpus=1,
+        num_proc=8,
+        **overrides
+    )
 
 
-def qwen_config_2gpus(**overrides) -> Dict[str, Any]:
+def qwen_config_2gpus(**overrides) -> DatasetPrepConfig:
     """Configuration for 2-GPU training."""
-    config = QWEN_BASE_CONFIG.copy()
-    config.update({
-        "gpus": 2,
-        "num_proc": 16,
-    })
-    config.update(overrides)
-    return config
+    return _base_qwen_config(
+        gpus=2,
+        num_proc=16,
+        **overrides
+    )
 
 
-def qwen_config_4gpus(**overrides) -> Dict[str, Any]:
+def qwen_config_4gpus(**overrides) -> DatasetPrepConfig:
     """Configuration for 4-GPU training."""
-    config = QWEN_BASE_CONFIG.copy()
-    config.update({
-        "gpus": 4,
-        "num_proc": 32,
-    })
-    config.update(overrides)
-    return config
+    return _base_qwen_config(
+        gpus=4,
+        num_proc=32,
+        **overrides
+    )
 
 
-def qwen_config_debug(**overrides) -> Dict[str, Any]:
+def qwen_config_debug(**overrides) -> DatasetPrepConfig:
     """Debug configuration with small dataset."""
-    config = QWEN_BASE_CONFIG.copy()
-    config.update({
-        "num_samples": 10,
-        "debug": 3,
-        "gpus": 1,
-        "num_proc": 1,
-    })
-    config.update(overrides)
-    return config
+    # Set default debug parameters but allow overrides
+    debug_defaults = {
+        'num_samples': 10,
+        'debug': 3,
+        'gpus': 1,
+        'num_proc': 1,
+    }
+    # Update defaults with user overrides
+    debug_defaults.update(overrides)
+    return _base_qwen_config(**debug_defaults)
 
 
-def qwen_config_full_finetuning(**overrides) -> Dict[str, Any]:
+def qwen_config_full_finetuning(**overrides) -> DatasetPrepConfig:
     """Configuration for full fine-tuning (no LoRA)."""
-    config = QWEN_BASE_CONFIG.copy()
-    config.update({
-        "gpus": 1,
-        "num_proc": 8,
-        "train_on_target_only": True,
-    })
-    config.update(overrides)
-    return config
+    return _base_qwen_config(
+        gpus=1,
+        num_proc=8,
+        train_on_target_only=True,
+        **overrides
+    )
 
 
 # Training configuration templates
@@ -140,8 +138,6 @@ def get_training_config_template(num_gpus: int = 1, max_seq_length: int = 16096)
     }
 
 
-def get_dataset_config_template(**kwargs) -> Dict[str, Any]:
+def get_dataset_config_template(**kwargs) -> DatasetPrepConfig:
     """Get a dataset configuration template."""
-    base_config = QWEN_BASE_CONFIG.copy()
-    base_config.update(kwargs)
-    return base_config
+    return _base_qwen_config(**kwargs)

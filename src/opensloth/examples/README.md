@@ -4,6 +4,8 @@ Examples module for OpenSloth configurations.
 This module provides pre-configured examples for dataset preparation and training
 with different setups (single GPU, multi-GPU, debug, etc.).
 
+All configuration functions now return Pydantic models for type safety and validation.
+
 Usage:
 from opensloth.examples import qwen_config_2gpus
 config = qwen_config_2gpus(dataset_name='your-dataset')
@@ -24,4 +26,6 @@ dataset_name='mlabonne/FineTome-100k',
 num_samples=1000,
 max_seq_length=8192
 )
+
+The configurations are now type-safe Pydantic models with automatic validation.
 """

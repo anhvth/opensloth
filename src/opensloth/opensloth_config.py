@@ -140,6 +140,10 @@ class DatasetPrepConfig(BaseModel):
         description="HF dataset 'repo' or path to a local JSON/JSONL file.",
         json_schema_extra={"cli_alias": "input"},
     )
+    input_file: str | None = Field(
+        default=None,
+        description="Path to local input file (overrides dataset_name if specified)",
+    )
     split: str = Field(default="train", description="Dataset split (for HF datasets)")
 
     # Processing

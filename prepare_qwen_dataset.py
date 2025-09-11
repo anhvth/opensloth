@@ -31,32 +31,35 @@ from opensloth.datasets_utils.qwen_dataset_utils import (
     load_local_file,
     post_process_text,
 )
+from opensloth.opensloth_config import DatasetPrepConfig
 from opensloth.examples import qwen_config_1gpu
 
 
-def prepare_qwen_dataset(config=None):
+def prepare_qwen_dataset(config: DatasetPrepConfig | None = None):
     """Main function to prepare Qwen dataset."""
     if config is None:
         config = qwen_config_1gpu()
     
-    # Extract configuration
-    tokenizer_name = config['tokenizer_name']
-    chat_template = config['chat_template']
-    dataset_name = config['dataset_name']
-    input_file = config['input_file']
-    split = config['split']
-    num_samples = config['num_samples']
-    num_proc = config['num_proc']
-    gpus = config['gpus']
-    max_seq_length = config['max_seq_length']
-    train_on_target_only = config['train_on_target_only']
-    instruction_part = config['instruction_part']
-    response_part = config['response_part']
-    debug = config['debug']
+    # Clean access to configuration parameters - no verbose dictionary parsing needed!
+    tokenizer_name = config.tokenizer_name
+    chat_template = config.chat_template
+    dataset_name = config.dataset_name
+    split = config.split
+    num_samples = config.num_samples
+    num_proc = config.num_proc
+    gpus = config.gpus
+    max_seq_length = config.max_seq_length
+    train_on_target_only = config.train_on_target_only
+    instruction_part = config.instruction_part
+    response_part = config.response_part
+    debug = config.debug
     
-    # If input_file is specified, use it instead of dataset_name
-    if input_file:
-        dataset_name = input_file
+    # If input_file is specified via dataset_name parameter, use it as a file path
+    if hasattr(config, 'input_file') and config.input_file:
+        dataset_name = config.input_file
+    elif os.path.exists(dataset_name):
+        # dataset_name is actually a file path
+        pass
     
     # Validate arguments
     if train_on_target_only:
@@ -143,12 +146,11 @@ def prepare_qwen_dataset(config=None):
             shard_dataset = data.shard(num_shards=num_shards, index=i)  # type: ignore
             shard_dataset.save_to_disk(shard_path)  # type: ignore
 
-        # Update config with actual dataset size
-        config['dataset_size'] = len(data)  # type: ignore
+        # Save metadata and configurations using Pydantic object directly
+        dataset_size = len(data)  # type: ignore
         
-        # Save metadata and configurations
         try:
-            save_dataset_metadata(output_dir, config)
+            save_dataset_metadata(output_dir, config, dataset_size)
         except Exception as e:
             pass
 
@@ -160,7 +162,7 @@ def prepare_qwen_dataset(config=None):
         # Save training configuration
         try:
             from opensloth.examples.qwen_configs import get_training_config_template
-            training_config_template = get_training_config_template(gpus, max_seq_length)
+            training_config_template = get_training_config_template(config.gpus, config.max_seq_length)
             save_training_config(output_dir, config, training_config_template)
         except Exception as e:
             pass
@@ -179,7 +181,7 @@ def main():
     
     args = parser.parse_args()
     
-    # Load configuration
+    # Load base configuration
     if args.config:
         from opensloth.examples import qwen_config_1gpu, qwen_config_2gpus, qwen_config_4gpus, qwen_config_debug
         config_map = {
@@ -195,10 +197,17 @@ def main():
     else:
         config = qwen_config_1gpu()
     
-    # Override config with command line arguments
+    # Override config with command line arguments by creating a new model instance
+    overrides = {}
     for key, value in vars(args).items():
         if value is not None and key != "config":
-            config[key] = value
+            overrides[key] = value
+    
+    if overrides:
+        # Create new config with overrides
+        config_dict = config.model_dump()
+        config_dict.update(overrides)
+        config = DatasetPrepConfig(**config_dict)
     
     prepare_qwen_dataset(config)
 

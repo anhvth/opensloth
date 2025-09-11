@@ -11,8 +11,14 @@ from tabulate import tabulate
 from transformers import AutoTokenizer
 
 
-def print_config_table(config_dict):
+def print_config_table(config):
     """Print configuration as a formatted table."""
+    # Handle both Pydantic objects and dictionaries
+    if hasattr(config, 'model_dump'):
+        config_dict = config.model_dump()
+    else:
+        config_dict = config
+        
     table_data = [[key, value] for key, value in config_dict.items()]
     print("\n" + "="*60)
     print("DATASET PREPARATION CONFIGURATION")
@@ -147,63 +153,109 @@ def post_process_text(text, tokenizer_name):
     return text
 
 
-def save_dataset_metadata(output_dir, config):
+def save_dataset_metadata(output_dir, config, dataset_size=0):
     """Save metadata for reproducibility and GUI auto-match."""
     import hashlib
+    from opensloth.opensloth_config import DatasetPrepConfig
+    
+    # Ensure we have a Pydantic object
+    if not hasattr(config, 'model_dump'):
+        # Convert dict to Pydantic object if needed (backward compatibility)
+        config = DatasetPrepConfig(**config)
+    
+    # Create metadata structure using object properties
+    meta_config = {
+        "tokenizer_name": config.tokenizer_name,
+        "chat_template": config.chat_template,
+        "dataset_name": config.dataset_name,
+        "split": config.split,
+        "max_seq_length": config.max_seq_length,
+        "num_samples": config.num_samples,
+        "train_on_target_only": config.train_on_target_only,
+        "instruction_part": config.instruction_part if config.train_on_target_only else None,
+        "response_part": config.response_part if config.train_on_target_only else None,
+        "preparer_class": "QwenDatasetPreparer",
+    }
     
     meta = {
-        "config": {
-            "tokenizer_name": config["tokenizer_name"],
-            "chat_template": config["chat_template"],
-            "dataset_name": config["dataset_name"],
-            "split": config["split"],
-            "max_seq_length": config["max_seq_length"],
-            "num_samples": config["num_samples"],
-            "train_on_target_only": config["train_on_target_only"],
-            "instruction_part": config["instruction_part"] if config["train_on_target_only"] else None,
-            "response_part": config["response_part"] if config["train_on_target_only"] else None,
-            "preparer_class": "QwenDatasetPreparer",
-        },
-        "size": config.get("dataset_size", 0),
+        "config": meta_config,
+        "size": dataset_size,
     }
-    payload = json.dumps(meta["config"], sort_keys=True, ensure_ascii=False)
+    
+    # Generate config hash from sorted JSON
+    payload = json.dumps(meta_config, sort_keys=True, ensure_ascii=False)
     meta["config_hash"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     
+    # Write directly to JSON
     with open(os.path.join(output_dir, "metadata.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
 def save_dataset_config(output_dir, config):
     """Save complete config for debugging and reuse."""
+    from opensloth.opensloth_config import DatasetPrepConfig
+    
+    # Ensure we have a Pydantic object
+    if not hasattr(config, 'model_dump'):
+        # Convert dict to Pydantic object if needed (backward compatibility)
+        config = DatasetPrepConfig(**config)
+        
+    # Create enhanced config with additional fields using object properties
     complete_config = {
-        'tokenizer_name': config['tokenizer_name'],
-        'chat_template': config['chat_template'],
-        'dataset_name': config['dataset_name'],
-        'split': config['split'],
-        'num_samples': config['num_samples'],
-        'num_proc': config['num_proc'],
-        'gpus': config['gpus'],
+        'tokenizer_name': config.tokenizer_name,
+        'chat_template': config.chat_template,
+        'dataset_name': config.dataset_name,
+        'split': config.split,
+        'num_samples': config.num_samples,
+        'num_proc': config.num_proc,
+        'gpus': config.gpus,
         'output_dir': output_dir,
-        'train_on_target_only': config['train_on_target_only'],
-        'instruction_part': config['instruction_part'] if config['train_on_target_only'] else None,
-        'response_part': config['response_part'] if config['train_on_target_only'] else None,
-        'max_seq_length': config['max_seq_length'],
-        'debug': config['debug'],
+        'train_on_target_only': config.train_on_target_only,
+        'instruction_part': config.instruction_part if config.train_on_target_only else None,
+        'response_part': config.response_part if config.train_on_target_only else None,
+        'max_seq_length': config.max_seq_length,
+        'debug': config.debug,
         'hf_token': None,
-        'num_shards': config['gpus'],
+        'num_shards': config.gpus,
         'model_family': 'Qwen'
     }
 
+    # Write directly to JSON
     with open(os.path.join(output_dir, "dataset_config.json"), "w", encoding="utf-8") as f:
         json.dump(complete_config, f, ensure_ascii=False, indent=2)
 
 
 def save_training_config(output_dir, config, training_config_template):
     """Save complete training configuration for train.py with schema validation."""
+    from opensloth.opensloth_config import DatasetPrepConfig
+    
+    # Ensure we have a Pydantic object
+    if not hasattr(config, 'model_dump'):
+        # Convert dict to Pydantic object if needed (backward compatibility)
+        config = DatasetPrepConfig(**config)
+        
+    # Work with the template and use object properties
     training_config = training_config_template.copy()
     training_config["opensloth_config"]["data_cache_path"] = output_dir
-    training_config["dataset_prep_config"] = config.copy()
+    
+    # Add dataset prep config using object properties
+    dataset_prep_config = {
+        'tokenizer_name': config.tokenizer_name,
+        'chat_template': config.chat_template,
+        'dataset_name': config.dataset_name,
+        'split': config.split,
+        'num_samples': config.num_samples,
+        'num_proc': config.num_proc,
+        'gpus': config.gpus,
+        'train_on_target_only': config.train_on_target_only,
+        'instruction_part': config.instruction_part,
+        'response_part': config.response_part,
+        'max_seq_length': config.max_seq_length,
+        'debug': config.debug,
+    }
+    training_config["dataset_prep_config"] = dataset_prep_config
 
+    # Write directly to JSON
     with open(os.path.join(output_dir, "training_config.json"), "w", encoding="utf-8") as f:
         json.dump(training_config, f, ensure_ascii=False, indent=2)
 
