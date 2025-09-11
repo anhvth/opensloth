@@ -7,6 +7,7 @@ import os
 import pprint
 import subprocess
 import sys
+import tempfile
 import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING, Tuple

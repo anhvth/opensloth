@@ -164,7 +164,7 @@ def patch_log_for_multi_gpu(trainer):
     try:
         local_rank = int(os.environ["OPENSLOTH_LOCAL_RANK"])
         world_size = int(os.environ["OPENSLOTH_WORLD_SIZE"])
-        log_cache_dir = os.environ["OPENSLOTH_OUTPUT_DIR"]
+        log_cache_dir = os.environ.get("OPENSLOTH_LOG_CACHE_DIR", ".cache/opensloth_logs")
         is_main = local_rank == 0
 
         print(f"[{local_rank=}] Patching log with smart aggregation. Dir: {log_cache_dir}, GPUs: {world_size}")

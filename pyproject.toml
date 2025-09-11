@@ -23,3 +23,4 @@ dependencies = [
 opensloth-sft-train = "opensloth.scripts.train:main"
 opensloth-make-data = "opensloth.scripts.prepare_dataset:main"
 opensloth-sft-run = "opensloth.scripts.unified_sft:main"
+os-tmux-worker = "opensloth.scripts.tmux_worker:main"
