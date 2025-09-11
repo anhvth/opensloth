@@ -7,10 +7,6 @@ import os
 import pprint
 import subprocess
 import sys
-im        # Backwards compatibility - assume it's already a dict
-        config_dict = config
-
-    from opensloth.dataset import GemmaDatasetPreparer, QwenDatasetPreparertempfile
 import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING, Tuple
@@ -141,31 +137,6 @@ def run_training(
         print(f"❌ Training process failed with exit code {process.returncode}.")
     return opensloth_config, training_args
 
-
-# def run_prepare_data(config: DatasetPrepConfig) -> str:
-#     """Runs the appropriate dataset preparer based on the config."""
-#     from opensloth.opensloth_config import DatasetPrepConfig
-
-#     # Convert Pydantic model to dict for backwards compatibility
-#     if isinstance(config, DatasetPrepConfig):
-#         config_dict = config.model_dump()
-#     else:
-#         # Backwards compatibility - assume it's already a dict
-#         config_dict = config
-
-#     method = config_dict.get("training_type", "sft")
-#     from opensloth.dataset import GemmaDatasetPreparer, QwenDatasetPreparer
-
-#     model_name = config_dict.get("tokenizer_name", "").lower()
-#         if "gemma" in model_name:
-#             preparer = GemmaDatasetPreparer()
-#         elif 'qwen' in model_name:
-#             preparer = QwenDatasetPreparer()
-#         else:
-#             raise NotImplementedError("Unsupported tokenizer type")
-
-#     output_dir = preparer.run_with_config(config_dict)
-#     return output_dir
 
 
 __all__ = [ "run_training"]

@@ -61,13 +61,6 @@ def _default_target_modules() -> list[str]:
         "down_proj",
     ]
 
-
-
-
-
-
-
-
 class LoraArgs(BaseModel):
     """Configuration for LoRA parameters in PEFT."""
 
@@ -87,10 +80,6 @@ class LoraArgs(BaseModel):
     )
     use_rslora: bool = Field(False, description="Use RSLoRA (Rank-Stabilized LoRA).", json_schema_extra={'cli_alias': 'use-rslora'})
 
-    class Config:
-        """Pydantic configuration for DataConfig."""
-
-        extra = "allow"
 
 
 class OpenSlothConfig(BaseModel):
@@ -126,49 +115,8 @@ class OpenSlothConfig(BaseModel):
         ),
     )
 
-    class Config:
-        """Pydantic configuration for DataConfig."""
 
-        extra = "allow"
 
-    @model_validator(mode='after')
-    def validate_training_type_args(self) -> "OpenSlothConfig":
-        """Post-initialization validation for OpenSlothConfig."""
-        # Core field checks
-        if self.data_cache_path is None:
-            raise ValueError("data_cache_path must be specified")
-        if not isinstance(self.devices, list) or not all(isinstance(d, int) for d in self.devices):
-            raise ValueError("devices must be a list of integers")
-        if self.lora_args is not None and not isinstance(self.lora_args, LoraArgs):
-            raise ValueError("lora_args must be an instance of LoraArgs")
-
-        # Initialize LoraArgs if not set and not using pretrained
-        if self.lora_args is None and self.pretrained_lora is None:
-            self.lora_args = LoraArgs()
-        
-        # Handle pretrained LoRA conflict
-        if self.pretrained_lora is not None:
-            if self.lora_args is not None:
-                import warnings
-                warnings.warn(
-                    f"Both pretrained_lora ({self.pretrained_lora}) and lora_args are set. "
-                    f"When loading a pretrained LoRA model, lora_args will be ignored and set to None.",
-                    stacklevel=2
-                )
-                self.lora_args = None
-
-        # Training type validation - only SFT is supported
-        if self.training_type != "sft":
-            raise ValueError(f"Only 'sft' training type is supported, got: {self.training_type}")
-
-        # Training type validation - only SFT is supported
-        if self.training_type != "sft":
-            raise ValueError(f"Only 'sft' training type is supported, got: {self.training_type}")
-
-        if self.fast_model_args and not self.fast_model_args.model_name:
-            raise ValueError("fast_model_args.model_name must be specified.")
-
-        return self
 
 OpenSlothConfig.model_rebuild()
 
@@ -281,15 +229,3 @@ class TrainingArguments(BaseModel):
         """Convert to dictionary for TrainingArguments initialization."""
         return self.model_dump()
     
-    def to_hf_training_arguments(self):
-        """Convert to HuggingFace TrainingArguments instance."""
-        from transformers import TrainingArguments as HfTrainingArguments
-        
-        # Get the model data and filter out fields that don't exist in HF TrainingArguments
-        data = self.model_dump()
-        
-        # Remove OpenSloth-specific fields that aren't in HF TrainingArguments
-        opensloth_specific_fields = {'dataset_num_proc'}
-        filtered_data = {k: v for k, v in data.items() if k not in opensloth_specific_fields}
-        
-        return HfTrainingArguments(**filtered_data)

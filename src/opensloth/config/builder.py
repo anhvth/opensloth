@@ -99,7 +99,6 @@ class TrainingConfigBuilder:
         final_ta_config = final_config.get("training_args", {})
         
         final_os_config["data_cache_path"] = self.dataset_path
-        final_os_config["training_type"] = self.method
         
         # 4. Pre-check for LoRA adapters to avoid conflicts
         # This must happen BEFORE creating the OpenSlothConfig object
@@ -127,7 +126,6 @@ class PrepConfigBuilder:
     """Builder for dataset preparation configuration."""
     def __init__(self, method: str = "sft") -> None:
         self.method = method.lower()
-        self._cfg: dict[str, Any] = {"training_type": self.method}
     def with_base(self, **kwargs):
         self._cfg.update({k: v for k, v in kwargs.items() if v is not None})
         return self

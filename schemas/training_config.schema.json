@@ -79,7 +79,6 @@
           "type": "object"
         },
         "LoraArgs": {
-          "additionalProperties": true,
           "description": "Configuration for LoRA parameters in PEFT.",
           "properties": {
             "finetune_vision_layers": {
@@ -154,7 +153,6 @@
           "type": "object"
         }
       },
-      "additionalProperties": true,
       "description": "Main configuration class combining all sub-configurations.",
       "properties": {
         "data_cache_path": {

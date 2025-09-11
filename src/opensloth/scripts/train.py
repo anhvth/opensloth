@@ -91,6 +91,7 @@ def main():
         opensloth_cfg = OpenSlothConfig(**training_config['opensloth_config'])
         train_args = TrainingArguments(**training_config['training_args'])
     except Exception as e:
+        import traceback; traceback.print_exc()
         print(f"❌ Error creating configuration objects: {e}")
         sys.exit(1)
     
