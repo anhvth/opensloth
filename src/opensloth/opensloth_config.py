@@ -223,6 +223,7 @@ class TrainingArguments(BaseModel):
     report_to: Literal["tensorboard", "wandb", "none"] = "tensorboard"
     eval_strategy: str = "no"  # must be no, when using multigpus
     dataset_num_proc: int = WORKERS
+    disable_tqdm: bool = False
 
     class Config:
         """Pydantic configuration for DataConfig."""

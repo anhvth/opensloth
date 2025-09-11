@@ -2,8 +2,7 @@
 # Qwen Dataset Preparation Script
 # Pre-configured for Qwen models with optimal settings
 
-set SCRIPT_DIR (dirname (realpath (status --current-filename)))
-set PREPARE_SCRIPT "$SCRIPT_DIR/prepare_dataset.py"
+set PREPARE_SCRIPT "opensloth-make-data"
 
 # Default configuration for Qwen models
 set DEFAULT_MODEL "unsloth/Qwen2.5-0.5B-Instruct"
@@ -131,7 +130,7 @@ if $train_on_target_only
 end
 
 # Build command
-set cmd uv run python $PREPARE_SCRIPT \
+set cmd uv run $PREPARE_SCRIPT \
     --tokenizer_name $model \
     --chat_template $chat_template \
     --dataset_name $dataset \

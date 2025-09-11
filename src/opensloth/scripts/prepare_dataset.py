@@ -217,6 +217,8 @@ def prepare_dataset(config: DatasetPrepConfig):
     formatting_func = create_formatting_func(
         tokenizer, train_on_target_only, instruction_part, response_part, tokenizer_name
     )
+    if 'messages' in dataset.column_names:
+        dataset = dataset.rename_column('messages', 'conversations')  # type: ignore
     dataset = dataset.map(formatting_func, batched=True)  # type: ignore
 
     # Tokenize and prepare labels

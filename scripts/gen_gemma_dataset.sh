@@ -2,8 +2,7 @@
 # Gemma Dataset Preparation Script
 # Pre-configured for Gemma models with optimal settings
 
-set SCRIPT_DIR (dirname (realpath (status --current-filename)))
-set PREPARE_SCRIPT "$SCRIPT_DIR/../src/opensloth/scripts/prepare_dataset.py"
+set PREPARE_SCRIPT "opensloth-make-data"
 
 # Default configuration for Gemma models
 set DEFAULT_MODEL "unsloth/gemma-2-2b-it"

@@ -105,7 +105,16 @@ def create_sft_trainer(
 ):
     from transformers import DataCollatorForSeq2Seq
     from trl import SFTTrainer
+    import os
 
+    # Only enable TensorBoard logging on main rank (LOCAL_RANK==0) to prevent thread hanging
+    local_rank = int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0"))
+    if local_rank != 0:
+        # Disable all reporting for non-main ranks to prevent hanging threads
+        hf_train_args.report_to = "none"
+        # Also disable progress bars for non-main ranks
+        hf_train_args.disable_tqdm = True
+    
     data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer)
     hf_train_args.skip_prepare_dataset = True  # type: ignore[attr-defined]
     return SFTTrainer(

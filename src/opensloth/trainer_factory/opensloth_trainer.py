@@ -19,16 +19,20 @@ from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
 warnings.filterwarnings("ignore")
 
 def setup_python_env():
-    import subprocess
-    import sys
+    """Setup Python environment for training."""
+    import os
+
+    # Disable some warnings
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    # Disable tensorflow warnings
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+    
+    # Disable tqdm monitoring thread to prevent hanging on exit
     try:
-        python_path = subprocess.check_output([sys.executable, "-c", "import sys; print(sys.executable)"], text=True).strip()
-        return python_path
-    except subprocess.CalledProcessError as e:
-        from opensloth.logging_config import get_opensloth_logger
-        logger = get_opensloth_logger(allow_unknown_gpu=True)
-        logger.error(f"Error getting Python path: {e}")
-        return sys.executable
+        import tqdm
+        tqdm.tqdm.monitor_interval = 0
+    except ImportError:
+        pass
 
 
 def _import_unsloth(gpu: int) -> dict[str, Any]:
@@ -177,6 +181,9 @@ def train_on_single_gpu(
         _logger.info("Registered batch shape assertion hook")
 
     _register_batch_shape_assertion(trainer.model, logger)
+    
+    # Register cleanup handlers to prevent hanging threads on exit
+    _register_cleanup_handlers(trainer, logger)
 
     assert trainer.model is not None, "Trainer model is None"
 
@@ -229,6 +236,9 @@ def train_on_single_gpu(
         # Log training summary
         logger.log_training_summary()
 
+    # Cleanup logging threads to prevent hanging on exit
+    _cleanup_logging_threads(trainer, logger)
+
     if 'destroy_nccl' in locals():  # type: ignore[truthy-function]
         destroy_nccl()  # type: ignore[misc]
 
@@ -256,6 +266,82 @@ def load_config_from_path(
     else:
         raise ValueError("No training configuration found")
     return opensloth_config, training_config
+
+
+def _cleanup_logging_threads(trainer, logger):
+    """Cleanup TensorBoard writers and tqdm threads to prevent hanging on exit."""
+    try:
+        # Close TensorBoard writer if it exists
+        if hasattr(trainer, 'state') and hasattr(trainer.state, 'log_history'):
+            # Force flush any pending logs
+            if hasattr(trainer, '_log'):
+                trainer._log({})
+        
+        # Try to access and close the TensorBoard writer through the trainer's callback handler
+        if hasattr(trainer, 'callback_handler') and hasattr(trainer.callback_handler, 'callbacks'):
+            for callback in trainer.callback_handler.callbacks:
+                # Check for TensorBoardCallback
+                if hasattr(callback, 'tb_writer') and callback.tb_writer is not None:
+                    logger.debug("Closing TensorBoard writer")
+                    callback.tb_writer.close()
+                    callback.tb_writer = None
+                # Check for any other writers with close() method
+                elif hasattr(callback, 'writer') and hasattr(callback.writer, 'close'):
+                    logger.debug("Closing logging writer")
+                    callback.writer.close()
+        
+        # Disable tqdm monitoring to prevent hanging threads
+        try:
+            import tqdm
+            # Disable the monitor thread
+            tqdm.tqdm.monitor_interval = 0
+            # Close any active instances
+            for instance in getattr(tqdm.tqdm, '_instances', set()):
+                if hasattr(instance, 'close'):
+                    instance.close()
+        except ImportError:
+            pass
+        
+        # Try to force cleanup of any remaining TensorBoard threads
+        try:
+            import threading
+            import sys
+            
+            # Look for TensorBoard and tqdm threads and try to clean them up
+            for thread in threading.enumerate():
+                if thread != threading.current_thread() and thread.daemon is False:
+                    # Check if it's a TensorBoard or tqdm thread by name
+                    thread_name = getattr(thread, 'name', '').lower()
+                    if any(keyword in thread_name for keyword in ['tensorboard', 'eventfile', 'tqdm', 'monitor']):
+                        logger.debug(f"Found logging thread: {thread.name}")
+                        # Try to mark as daemon so Python will exit
+                        thread.daemon = True
+        except Exception as e:
+            logger.debug(f"Thread cleanup warning: {e}")
+        
+        logger.debug("Logging threads cleanup completed")
+    except Exception as e:
+        logger.warning(f"Error during logging cleanup: {e}")
+
+
+def _register_cleanup_handlers(trainer, logger):
+    """Register cleanup handlers to ensure proper shutdown."""
+    import atexit
+    import signal
+    
+    def cleanup_handler():
+        _cleanup_logging_threads(trainer, logger)
+    
+    # Register for normal exit
+    atexit.register(cleanup_handler)
+    
+    # Register for signal handling (optional, for completeness)
+    try:
+        for sig in [signal.SIGTERM, signal.SIGINT]:
+            signal.signal(sig, lambda s, f: cleanup_handler())
+    except (AttributeError, OSError):
+        # Signal handling might not be available in all contexts
+        pass
 
 
 def build_tmux_script(

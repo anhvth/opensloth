@@ -2,9 +2,7 @@
 # Llama Dataset Preparation Script
 # Pre-configured for Llama models with optimal settings
 
-set SCRIPT_DIR (dirname (realpath (status --current-filename)))
-set PREPARE_SCRIPT "$SCRIPT_DIR/../src/opensloth/scripts/prepare_dataset.py"
-
+set PREPARE_SCRIPT "opensloth-make-data"
 # Default configuration for Llama models
 set DEFAULT_MODEL "unsloth/Llama-3.2-1B-Instruct"
 set DEFAULT_CHAT_TEMPLATE "llama-3.2"

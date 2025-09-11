@@ -403,9 +403,19 @@ def _patch_standard_logging(logger: OpenslothLogger) -> None:
     root.setLevel(logging.INFO)
     root._opensloth_patched = True  # type: ignore[attr-defined]
 
+    # Get local rank for distributed training control
+    local_rank = int(os.environ.get("OPENSLOTH_LOCAL_RANK", "0"))
+    
     # Common noisy libs -> INFO to reduce clutter
+    # For non-main ranks, set to WARNING or ERROR to reduce noise even further
+    log_level = logging.INFO if local_rank == 0 else logging.WARNING
     for name in ["transformers", "datasets", "torch", "accelerate", "unsloth"]:
-        logging.getLogger(name).setLevel(logging.INFO)
+        logging.getLogger(name).setLevel(log_level)
+    
+    # Specifically suppress tensorboard and tqdm logging on non-main ranks
+    if local_rank != 0:
+        logging.getLogger("tensorboard").setLevel(logging.ERROR)
+        logging.getLogger("tqdm").setLevel(logging.ERROR)
 
 
 def setup_comprehensive_logging_interception(force: bool = False) -> None:
