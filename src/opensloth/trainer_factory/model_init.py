@@ -17,12 +17,38 @@ from opensloth.patching.patch_log import patch_log_for_multi_gpu
 def _init_model_and_tokenizer(cfg: OpenSlothConfig, unsloth_modules: dict[str, Any] | None = None):
     logger = get_opensloth_logger()
     
+    # Validate environment and dependencies before proceeding
+    import sys
+    import gc
+    import torch
+    
+    # Force garbage collection before model initialization
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
     # Lazy import for project rule compliance
     if unsloth_modules is not None:
         FastLanguageModel = unsloth_modules["FastLanguageModel"]  # noqa: N806
         FastModel = unsloth_modules.get("FastModel")  # noqa: N806
     else:
-        from unsloth import FastLanguageModel, FastModel
+        # CRITICAL: Verify Unsloth was imported before torch-related modules
+        unsloth_imported = any('unsloth' in name for name in sys.modules.keys())
+        torch_imported = any(name.startswith('torch') for name in sys.modules.keys())
+        
+        if torch_imported and not unsloth_imported:
+            logger.warning("CRITICAL: torch modules imported before unsloth. This may cause C extension conflicts!")
+        
+        try:
+            from unsloth import FastLanguageModel, FastModel
+            logger.info("Successfully imported Unsloth modules")
+        except Exception as e:
+            logger.error(f"Failed to import Unsloth modules: {e}")
+            # Force cleanup before re-raising
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            raise
 
     # If using a pretrained LoRA, we must identify the true base model
     # to correctly initialize vLLM (`fast_inference=True`).
@@ -49,22 +75,73 @@ def _init_model_and_tokenizer(cfg: OpenSlothConfig, unsloth_modules: dict[str, A
 
     model_args = cfg.fast_model_args.model_dump()
 
-    # Load base model (potentially with vLLM enabled)
-    model, tokenizer = FastLanguageModel.from_pretrained(**model_args)
+    # Load base model (potentially with vLLM enabled) with proper error handling
+    try:
+        logger.info(f"Loading model with args: {model_args}")
+        model, tokenizer = FastLanguageModel.from_pretrained(**model_args)
+        logger.info("Model loaded successfully")
+        
+        # Validate model state after loading
+        if model is None:
+            raise RuntimeError("Model loading returned None - potential C extension error")
+        if tokenizer is None:
+            raise RuntimeError("Tokenizer loading returned None")
+            
+    except Exception as e:
+        logger.error(f"Error during model loading: {e}")
+        # Cleanup on failure
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        raise
+        
     maybe_hot_fix_gemma(cfg, logger, tokenizer)
     setup_comm_backend(cfg)
 
-    # Apply LoRA configuration
-    if cfg.fast_model_args.full_finetuning:
-        logger.info("Full fine-tuning enabled. Skipping PEFT model setup.")
-    elif cfg.pretrained_lora:
-        # Load the pretrained adapter onto the base model
-        logger.info("Loading pretrained LoRA adapter onto the base model...")
-        model = FastModel.from_pretrained(model=model, model_name=cfg.pretrained_lora)
-    elif cfg.lora_args:
-        # Initialize a new LoRA adapter
-        logger.info("Initializing new LoRA adapter...")
-        model = FastModel.get_peft_model(model, **cfg.lora_args.model_dump())
+    # Apply LoRA configuration with proper error handling
+    try:
+        if cfg.fast_model_args.full_finetuning:
+            logger.info("Full fine-tuning enabled. Skipping PEFT model setup.")
+        elif cfg.pretrained_lora:
+            # Load the pretrained adapter onto the base model
+            logger.info("Loading pretrained LoRA adapter onto the base model...")
+            original_model = model
+            model = FastModel.from_pretrained(model=model, model_name=cfg.pretrained_lora)
+            
+            # Validate LoRA loading
+            if model is None:
+                logger.error("LoRA loading returned None, reverting to base model")
+                model = original_model
+            else:
+                logger.info("LoRA adapter loaded successfully")
+                
+        elif cfg.lora_args:
+            # Initialize a new LoRA adapter
+            logger.info(f"Initializing new LoRA adapter... Args: {cfg.lora_args}")
+            original_model = model
+            model = FastModel.get_peft_model(model, **cfg.lora_args.model_dump())
+            
+            # Validate LoRA initialization
+            if model is None:
+                logger.error("LoRA initialization returned None, reverting to base model")
+                model = original_model
+            else:
+                logger.info("LoRA adapter initialized successfully")
+                
+    except Exception as e:
+        logger.error(f"Error during LoRA setup: {e}")
+        # Cleanup on failure
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        raise
+    
+    # Final validation
+    if model is None:
+        raise RuntimeError("Model is None after initialization - critical error")
     
     return model, tokenizer
 

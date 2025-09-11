@@ -33,15 +33,49 @@ def get_callback_and_setup_method():
 
         def _sync_gradients(self, model: torch.nn.Module) -> None:
             """Synchronize gradients across all ranks using NCCL all-reduce."""
-
+            import gc
+            
             name_value = {}
+            gradients_to_sync = []
+            
+            # Collect gradients that need syncing and validate them first
             for name, param in model.named_parameters():
                 if param.grad is None:
                     continue
-                dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)
-                param.grad.div_(self.world_size)
-                name_value[name] = param.grad.mean().item()
-
+                # Validate gradient tensor before syncing
+                if not param.grad.is_contiguous():
+                    param.grad = param.grad.contiguous()
+                # Check for invalid gradient values that could cause C extension issues
+                if torch.isnan(param.grad).any() or torch.isinf(param.grad).any():
+                    print(f"[RANK={self.local_rank}] WARNING: Invalid gradient detected in {name}, skipping sync")
+                    continue
+                gradients_to_sync.append((name, param))
+            
+            # Perform gradient synchronization safely
+            try:
+                for name, param in gradients_to_sync:
+                    # Create a copy to avoid in-place modifications that can cause ref counting issues
+                    grad_copy = param.grad.clone()
+                    dist.all_reduce(grad_copy, op=dist.ReduceOp.SUM)
+                    grad_copy.div_(self.world_size)
+                    
+                    # Replace the gradient safely
+                    param.grad.data.copy_(grad_copy)
+                    name_value[name] = param.grad.mean().item()
+                    
+                    # Explicitly delete the copy to help with memory management
+                    del grad_copy
+                    
+            except Exception as e:
+                print(f"[RANK={self.local_rank}] ERROR in gradient sync: {e}")
+                # Force garbage collection to clean up any dangling references
+                gc.collect()
+                torch.cuda.empty_cache()
+                raise
+            
+            # Force garbage collection after gradient sync to prevent memory leaks
+            gc.collect()
+            
             # print(f"[RANK={self.local_rank}] Gradient sync complete: {name_value}")
             # import ipdb; ipdb.set_trace()
 

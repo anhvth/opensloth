@@ -17,6 +17,10 @@ def patch_inner_training_loop_for_sft(trainer, sequence_packing):
     """
     # Get environment variables
     # sequence_packing = opensloth_config.sequence_packing
+    
+    # Initialize memory monitor for detecting memory issues
+    from opensloth.memory_monitor import MemoryMonitor, check_for_memory_leaks
+    memory_monitor = MemoryMonitor()
 
     @patch
     def _inner_training_loop(
@@ -27,6 +31,9 @@ def patch_inner_training_loop_for_sft(trainer, sequence_packing):
         trial=None,
         ignore_keys_for_eval=None,
     ):
+        # Import modules at function level to avoid scoping issues
+        import gc
+        import torch
         self.accelerator.free_memory()
         self._train_batch_size = batch_size
         if self.args.auto_find_batch_size:
@@ -243,6 +250,9 @@ def patch_inner_training_loop_for_sft(trainer, sequence_packing):
         logger.info(
             f"  Number of trainable parameters = {get_model_param_count(model, trainable_only=True):,}"
         )
+        
+        # Log initial memory state for monitoring
+        memory_monitor.log_memory_summary(0, "Training start ")
 
         self.state.epoch = 0
         start_time = time.time()
@@ -435,9 +445,20 @@ def patch_inner_training_loop_for_sft(trainer, sequence_packing):
                         else contextlib.nullcontext
                     )
                     with context():
-                        tr_loss_step = self.training_step(
-                            model, inputs, num_items_in_batch
-                        )
+                        try:
+                            tr_loss_step = self.training_step(
+                                model, inputs, num_items_in_batch
+                            )
+                        except Exception as e:
+                            # Handle potential C extension errors gracefully
+                            if "none_dealloc" in str(e).lower() or "reference" in str(e).lower():
+                                logger.error(f"Detected potential memory/reference error: {e}")
+                                logger.info("Forcing garbage collection and CUDA cache cleanup...")
+                                gc.collect()
+                                if torch.cuda.is_available():
+                                    torch.cuda.empty_cache()
+                                    torch.cuda.synchronize()
+                            raise
 
                     if (
                         args.logging_nan_inf_filter
@@ -458,6 +479,20 @@ def patch_inner_training_loop_for_sft(trainer, sequence_packing):
                     self.current_flos += float(self.floating_point_ops(inputs))
 
                     if do_sync_step:
+                        # Memory monitoring and cleanup before critical operations
+                        
+                        # Check memory health and potential leaks
+                        memory_monitor.check_memory_health(self.state.global_step)
+                        check_for_memory_leaks(model, self.state.global_step)
+                        
+                        # Periodic deep memory cleanup every 50 steps to prevent accumulation
+                        if self.state.global_step % 50 == 0:
+                            memory_monitor.log_memory_summary(self.state.global_step, "Pre-cleanup ")
+                            gc.collect()
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                            memory_monitor.log_memory_summary(self.state.global_step, "Post-cleanup ")
+                        
                         # Since we perform prefetching, we need to manually set sync_gradients to True
                         self.accelerator.gradient_state._set_sync_gradients(True)
 
@@ -513,6 +548,14 @@ def patch_inner_training_loop_for_sft(trainer, sequence_packing):
                                 self.lr_scheduler.step()
 
                         model.zero_grad()
+                        
+                        # Explicit cleanup after optimizer step to prevent memory leaks
+                        # This helps prevent the "none_dealloc" error by ensuring proper cleanup
+                        if hasattr(torch.cuda, 'empty_cache') and torch.cuda.is_available():
+                            # Only clear cache occasionally to avoid performance impact
+                            if self.state.global_step % 10 == 0:
+                                torch.cuda.empty_cache()
+                        
                         self.state.global_step += 1
                         if sequence_packing:
                             # When packing is enabled, use the original calculation
