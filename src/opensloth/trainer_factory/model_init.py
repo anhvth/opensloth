@@ -92,7 +92,7 @@ def _load_dataset(cfg: OpenSlothConfig, hf_train_args: TrainingArguments):
         if drop:
             logger.info("Filtered %s over-length samples (>%s)", drop, max_len)
 
-    ensure_dataset_features(train_ds, ["input_ids", "labels"], "sft")
+    ensure_dataset_features(train_ds, ["input_ids", "labels"])
     return train_ds
 
 
