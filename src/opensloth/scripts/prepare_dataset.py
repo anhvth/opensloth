@@ -10,91 +10,12 @@ import os
 import random
 from typing import cast
 
-import datasets
 
-import unsloth
-from unsloth.chat_templates import get_chat_template, standardize_data_formats
-
-from transformers import AutoTokenizer
 
 from pydantic import BaseModel, Field
 
-
+from opensloth.opensloth_config import DatasetPrepConfig
 from typing import Dict, Any
-
-class DatasetPrepConfig(BaseModel):
-    """Configuration for dataset preparation.
-
-    This mirrors the arguments used by the os-data CLI but provides
-    a clean, typed interface for programmatic usage and auto-generation.
-    """
-
-    # Model/tokenizer
-    tokenizer_name: str = Field(
-        description="Tokenizer or model identifier/path",
-        json_schema_extra={"cli_alias": "model"},
-    )
-    chat_template: str = Field("chatml", description="Chat template name to apply")
-
-    # Dataset source
-    dataset_name: str = Field(
-        description="HF dataset 'repo' or path to a local JSON/JSONL file.",
-        json_schema_extra={"cli_alias": "input"},
-    )
-    input_file: str | None = Field(
-        default=None,
-        description="Path to local input file (overrides dataset_name if specified)",
-    )
-    split: str = Field(default="train", description="Dataset split (for HF datasets)")
-
-    # Processing
-    num_samples: int = Field(
-        default=-1,
-        description="Number of samples to process (-1 for all)",
-        json_schema_extra={"cli_alias": "samples"},
-    )
-    num_proc: int = Field(
-        default=8,
-        description="Workers for dataset map/tokenization",
-        json_schema_extra={"cli_alias": "workers"},
-    )
-    gpus: int = Field(
-        default=1, description="Number of GPU shards to create for the dataset."
-    )
-    output_dir: str | None = Field(
-        default=None,
-        description="Output directory for processed data.",
-        json_schema_extra={"cli_alias": "data-output"},
-    )
-
-    # Labeling
-    train_on_target_only: bool = Field(
-        default=False,
-        description="If True, mask non-assistant tokens (response-only training).",
-    )
-    instruction_part: str = Field(
-        default="",
-        description="Marker that begins a user/instruction turn",
-    )
-    response_part: str = Field(
-        default="",
-        description="Marker that begins an assistant/response turn",
-    )
-    max_seq_length: int = Field(
-        4096,
-        description="Maximum sequence length for tokenization.",
-        json_schema_extra={"cli_alias": "max-seq-length"},
-    )
-
-    # Authentication
-    hf_token: str | None = Field(
-        default=None,
-        description="Hugging Face token for accessing gated models/datasets",
-    )
-
-    class Config:
-        extra = "allow"
-
 
 def get_training_config_template(model_name: str, num_gpus: int = 1, max_seq_length: int = 4096) -> Dict[str, Any]:
     """Get a training configuration template."""
@@ -155,7 +76,12 @@ def get_training_config_template(model_name: str, num_gpus: int = 1, max_seq_len
 
 def prepare_dataset(config: DatasetPrepConfig):
     """Main function to prepare dataset for any model."""
+    import datasets
 
+    import unsloth
+    from unsloth.chat_templates import get_chat_template, standardize_data_formats
+
+    from transformers import AutoTokenizer
     # Clean access to configuration parameters - no verbose dictionary parsing needed!
     tokenizer_name = config.tokenizer_name
     chat_template = config.chat_template
