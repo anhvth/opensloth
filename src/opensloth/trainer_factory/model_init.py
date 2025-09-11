@@ -12,7 +12,7 @@ from .base import (
     validate_dataset_compatibility,
     ensure_dataset_features,
 )
-
+from opensloth.patching.patch_log import patch_log_for_multi_gpu
 
 def _init_model_and_tokenizer(cfg: OpenSlothConfig, unsloth_modules: dict[str, Any] | None = None):
     logger = get_opensloth_logger()
@@ -116,14 +116,18 @@ def create_sft_trainer(
         hf_train_args.disable_tqdm = True
     
     data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer)
+    
+    
     hf_train_args.skip_prepare_dataset = True  # type: ignore[attr-defined]
-    return SFTTrainer(
+    trainer =  SFTTrainer(
         model=model,
         train_dataset=train_dataset,
         args=hf_train_args,          # type: ignore[arg-type]
         tokenizer=tokenizer,         # type: ignore[arg-type]
         data_collator=data_collator,
     )
+    trainer = patch_log_for_multi_gpu(trainer)
+    return trainer
 
 
 def setup_model_and_training(opensloth_config: OpenSlothConfig, hf_train_args: TrainingArguments, unsloth_modules: dict[str, Any] | None = None):

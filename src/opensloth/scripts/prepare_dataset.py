@@ -15,10 +15,18 @@ from typing import cast
 from pydantic import BaseModel, Field
 
 from opensloth.opensloth_config import DatasetPrepConfig
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
-def get_training_config_template(model_name: str, num_gpus: int = 1, max_seq_length: int = 4096) -> Dict[str, Any]:
+def get_training_config_template(model_name: str, num_gpus: int = 1, max_seq_length: int = 4096, lora_r: int = 8, lora_alpha: Optional[int] = None, lora_dropout: float = 0.0, lora_bias: str = "none", lora_random_state: int = 3407, lora_target_modules: Optional[list[str]] = None, use_rslora: bool = False, finetune_vision_layers: bool = False, finetune_language_layers: bool = True, finetune_attention_modules: bool = True, finetune_mlp_modules: bool = True) -> Dict[str, Any]:
     """Get a training configuration template."""
+    # If lora_alpha not provided, default to 2x lora_r
+    if lora_alpha is None:
+        lora_alpha = lora_r * 2
+        
+    # If lora_target_modules not provided, use default
+    if lora_target_modules is None:
+        lora_target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+        
     return {
         "opensloth_config": {
             "data_cache_path": None,  # Will be set by dataset preparation
@@ -35,17 +43,17 @@ def get_training_config_template(model_name: str, num_gpus: int = 1, max_seq_len
                 "gpu_memory_utilization": 0.7
             },
             "lora_args": {
-                "finetune_vision_layers": False,
-                "finetune_language_layers": True,
-                "finetune_attention_modules": True,
-                "finetune_mlp_modules": True,
-                "r": 8,
-                "lora_alpha": 16,
-                "lora_dropout": 0.0,
-                "bias": "none",
-                "random_state": 3407,
-                "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-                "use_rslora": False
+                "finetune_vision_layers": finetune_vision_layers,
+                "finetune_language_layers": finetune_language_layers,
+                "finetune_attention_modules": finetune_attention_modules,
+                "finetune_mlp_modules": finetune_mlp_modules,
+                "r": lora_r,
+                "lora_alpha": lora_alpha,
+                "lora_dropout": lora_dropout,
+                "bias": lora_bias,
+                "random_state": lora_random_state,
+                "target_modules": lora_target_modules,
+                "use_rslora": use_rslora
             },
             "pretrained_lora": None,
             "sequence_packing": True,

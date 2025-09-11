@@ -21,8 +21,9 @@ If you are not using Python 3.10.x, please create a new virtual environment with
 A multi-GPU training framework that combines [Unsloth](https://github.com/unslothai/unsloth) with multi-GPU support and [sequence packing](https://huggingface.co/blog/sirluk/llm-sequence-packing) optimizations.
 
 **Core Components:**
+
 - **Unsloth**: 2x faster training with 75% VRAM savings
-- **Multi-GPU**: Distributed training across multiple GPUs  
+- **Multi-GPU**: Distributed training across multiple GPUs
 - **Sequence Packing**: Smart batching that reduces padding waste by up to 40%
 
 **The Result:** Unsloth's efficiency × GPU count × sequence packing optimizations = speedups that often exceed theoretical maximums.
@@ -42,13 +43,23 @@ pip install unsloth xformers opensloth
 ```bash
 # Basic multi-GPU training
 python scripts/train.py
+
+# New: Single-step dataset prep + training
+opensloth-sft-run \
+    --model unsloth/Qwen3-0.6b-bnb-4bit \
+    --input data/x1.jsonl \
+    --output-dir outputs/demo_run \
+    --devices 0 \
+    --samples 100 --max-seq-length 4096 --dry-run
+
+# Remove --dry-run to actually start training
 ```
 
-| Example | Description | Link/Command |
-|---------|-------------|--------------|
+| Example                    | Description                                               | Link/Command                                                                                                      |
+| -------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | **Kaggle Notebook (T4x2)** | Live training example on Kaggle's dual T4 GPU environment | [🔗 Qwen3 OpenSloth 2GPUs](https://www.kaggle.com/code/anhvth226/qwen3-opensloth-2gpus?scriptVersionId=246662898) |
-| **Local Training Script** | Check out the training script for configuration examples | `python scripts/train.py` |
-| **Local Jupyter Notebook** | Interactive training notebook for local development | [`notebooks/train.ipynb`](notebooks/train.ipynb) |
+| **Local Training Script**  | Check out the training script for configuration examples  | `python scripts/train.py`                                                                                         |
+| **Local Jupyter Notebook** | Interactive training notebook for local development       | [`notebooks/train.ipynb`](notebooks/train.ipynb)                                                                  |
 
 ## ⚡ Performance Benchmarks
 
@@ -57,37 +68,43 @@ python scripts/train.py
 ### opensloth vs Unsloth Direct Comparison
 
 Controlled comparison with identical configurations:
-- **Model**: Qwen3-8B-bnb-4bit  
+
+- **Model**: Qwen3-8B-bnb-4bit
 - **Training Steps**: 100 steps
 - **Global Batch Size**: 32
 
 **Results:**
+
 - **opensloth (2 GPUs)**: 8m 28s ⚡
 - **Unsloth (1 GPU)**: 19m 34s
-- **Performance Gain**: ~2.3x faster 
+- **Performance Gain**: ~2.3x faster
 
 **Why 2.3x Speedup on 2 GPUs?**
 
 OpenSloth achieves **2.3x speedup** through three optimizations:
+
 - ✅ **Sequence packing**: Smart batching reduces padding waste ([learn more](https://huggingface.co/blog/sirluk/llm-sequence-packing))
 - ✅ **Multi-GPU scaling**: Distributed training across GPUs
 - ✅ **Load balancing**: Even workload distribution across GPUs
 
 **Scaling Expectations:**
+
 - **2 GPUs**: ~2.3x faster than single GPU
 - **4 GPUs**: ~4.6x faster than single GPU
 - **8 GPUs**: ~9.2x faster than single GPU
 
-
 ## 🔧 Quick Tips
+
 - Enable packing, set bz=1, long sequence length (8k, 16k, etc.) with larger gradient accumulation steps (64, 128). Unsloth's will automatically handle sequence packing on global batch to optimize gpu utilization.
 
 **For faster iteration:**
+
 - Start with smaller models: `unsloth/Qwen3-0.6b-bnb-4bit`
 - Test single GPU first: modify `gpus=[0]` in script
 - Use fewer samples for quick testing
 
 **Recommended Configuration:**
+
 ```python
 # Optimize for sequence packing and multi-GPU efficiency
 TrainingConfig(
@@ -98,7 +115,6 @@ TrainingConfig(
 ```
 
 ## 🔧 Troubleshooting
-
 
 ### Triton Kernel Compilation Error: Missing Python.h
 
@@ -125,12 +141,14 @@ sudo apt install python3.10-dev
 Replace `python3.10-dev` with your Python version if needed (e.g., `python3.11-dev`).
 
 **Notes:**
+
 - This is common for packages that compile native extensions (Triton, PyTorch custom kernels, etc.).
 - After installing, you do **not** need to reinstall your virtual environment—just re-run your script.
 
 If you are on a different OS (CentOS, macOS, etc.), please consult your system's package manager or ask for specific instructions.
 
 **Single GPU Testing:**
+
 ```python
 # In your training script, change:
 gpus = [0]  # Use only first GPU for debugging
@@ -156,14 +174,56 @@ Follow these steps to extract and save a dataset from an Unsloth notebook:
    ```
 
 7. Place it here
+
 ```python
 ....
 opensloth_config = OpenSlothConfig(
     data_cache_path="data/cache_qwen3_dataset/",
     devices=DEVICES,
     ...
-        
+
 ```
 
-
 This will store the processed dataset for later use.
+
+## Unified Pipeline (opensloth-sft-run)
+
+The `opensloth-sft-run` command automates dataset preparation and training.
+
+Directory layout:
+
+```
+outputs/demo_run/
+    dataset/   # processed + sharded dataset (metadata.json, dataset_config.json, training_config.json)
+    train/     # training outputs (checkpoints, logs)
+```
+
+Example full run:
+
+```bash
+opensloth-sft-run \
+    --model /mnt/models/unsloth/Qwen3-14B-bnb-4bit \
+    --input /mnt/data/LC_STANDARD_messages_465k.json \
+    --output-dir outputs/qwen14b_lc465 \
+    --devices 0,1,2,3 \
+    --samples 50000 --bs 2 --grad-accum 8 --epochs 2
+```
+
+Fast iteration with dry-run:
+
+```bash
+opensloth-sft-run --model unsloth/Qwen3-0.6b-bnb-4bit \
+    --input data/x1.jsonl --output-dir outputs/test_small --devices 0 --samples 50 --dry-run
+```
+
+Key arguments:
+
+- `--model`: HF id or local path (used for tokenizer + FastModel)
+- `--input`: HF dataset repo or local JSON/JSONL file
+- `--output-dir`: Root directory containing `dataset/` and `train/`
+- `--devices`: Comma separated GPU indices (controls sharding + training)
+- `--samples`: Limit samples for quick tests
+- `--bs`, `--grad-accum`: Batch composition controls
+- `--dry-run`: Skip training after preparing configs
+
+You can re-run the same command; dataset prep is skipped if shards already exist.

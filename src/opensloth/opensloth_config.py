@@ -69,7 +69,7 @@ class LoraArgs(BaseModel):
     finetune_attention_modules: bool = True
     finetune_mlp_modules: bool = True
     r: int = Field(8, description="LoRA rank (`r`).", json_schema_extra={'cli_alias': 'lora-r'})
-    lora_alpha: int = Field(16, description="LoRA alpha.", json_schema_extra={'cli_alias': 'lora-alpha'})  # Updated default
+    lora_alpha: Optional[int] = Field(None, description="LoRA alpha. If not provided, defaults to 2x LoRA rank.", json_schema_extra={'cli_alias': 'lora-alpha'})
     lora_dropout: float = Field(0.0, description="LoRA dropout.", json_schema_extra={'cli_alias': 'lora-dropout'})
     bias: str = "none"
     random_state: int = 3407
@@ -79,6 +79,13 @@ class LoraArgs(BaseModel):
         json_schema_extra={'cli_alias': 'targets'}
     )
     use_rslora: bool = Field(False, description="Use RSLoRA (Rank-Stabilized LoRA).", json_schema_extra={'cli_alias': 'use-rslora'})
+
+    @model_validator(mode='after')
+    def set_default_lora_alpha(self):
+        """Set lora_alpha to 2x rank if not explicitly provided."""
+        if self.lora_alpha is None:
+            self.lora_alpha = self.r * 2
+        return self
 
 
 

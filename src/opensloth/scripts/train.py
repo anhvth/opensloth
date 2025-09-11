@@ -1,112 +1,195 @@
 #!/usr/bin/env python3
+"""Unified SFT pipeline: prepare dataset then launch training.
+
+Usage (single JSONL file):
+  opensloth-sft-run \
+    --model /path/to/model \
+    --input data/x1.jsonl \
+    --output-dir outputs/demo_run \
+    --devices 0,1 \
+    --samples 1000 --max-seq-length 4096
+
+This will create:
+  outputs/demo_run/dataset/  (processed shards + metadata)
+  outputs/demo_run/train/    (training outputs: checkpoints, logs)
+
+Dataset prep arguments largely mirror DatasetPrepConfig fields.
+Training arguments can be minimally overridden via CLI; otherwise a template is used.
 """
-Minimal, read-only training script for OpenSloth SFT.
-Simply loads configuration from dataset directory and starts training.
-"""
+from __future__ import annotations
+
 import argparse
 import json
-import sys
 import os
 from pathlib import Path
+from datetime import datetime
 
-# Add the src directory to the path so we can import opensloth
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+# Import unsloth FIRST (critical for OpenSloth) when training stage begins; we delay until needed.
 
+from opensloth.opensloth_config import DatasetPrepConfig, OpenSlothConfig, TrainingArguments
+from opensloth.scripts.prepare_dataset import prepare_dataset, get_training_config_template  # reuse existing logic
 from opensloth.api import run_training
-from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
 
 
-def main():
-    """Main training function."""
-    parser = argparse.ArgumentParser(
-        description="Minimal OpenSloth SFT Training - loads all config from dataset directory",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description="Unified dataset preparation + SFT training",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    
-    # Core arguments
-    parser.add_argument('dataset', help='Path to the processed and sharded dataset')
-    parser.add_argument('--devices', type=str, default='0', help='Comma-separated GPU device IDs')
-    parser.add_argument('--dry-run', action='store_true', 
-                       help='Print configuration and exit without running')
-    parser.add_argument('--tmux', action='store_true', help='Use tmux for multi-GPU training')
-    
-    args = parser.parse_args()
-    
-    # Validate dataset path
-    dataset_path = Path(args.dataset)
-    if not dataset_path.exists():
-        print(f"❌ Error: Dataset path '{args.dataset}' does not exist.")
-        sys.exit(1)
-    
-    # Check for required config files
-    training_config_path = dataset_path / "training_config.json"
-    dataset_config_path = dataset_path / "dataset_config.json"
-    
-    if not training_config_path.exists():
-        print(f"❌ Error: training_config.json not found in {args.dataset}")
-        print("💡 Make sure to run prepare_qwen_dataset.py first to generate the training config.")
-        sys.exit(1)
-    
-    if not dataset_config_path.exists():
-        print(f"❌ Error: dataset_config.json not found in {args.dataset}")
-        print("💡 Make sure to run prepare_qwen_dataset.py first to generate the dataset config.")
-        sys.exit(1)
-    
-    # Load configurations
-    try:
-        with open(training_config_path, 'r') as f:
-            training_config = json.load(f)
-        
-        with open(dataset_config_path, 'r') as f:
-            dataset_config = json.load(f)
-            
-    except Exception as e:
-        print(f"❌ Error loading configuration: {e}")
-        sys.exit(1)
-    
-    training_config['opensloth_config']['data_cache_path'] = str(dataset_path.absolute())
-    
-    # Generate output directory based on dataset name and timestamp
-    from datetime import datetime
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_short = training_config['opensloth_config']['fast_model_args']['model_name'].split("/")[-1].replace("-", "_").lower()
-    dataset_short = dataset_path.name.replace("-", "_").lower()
-    output_dir = f"outputs/sft_{model_short}_{dataset_short}_{timestamp}"
-    print(f"ℹ️ Output directory set to: {output_dir}")
-    training_config['training_args']['output_dir'] = output_dir
-    
+
+    # Core model/tokenizer
+    p.add_argument("--model", required=True, help="Model / tokenizer path or HF id (FastModelArgs.model_name & tokenizer_name)")
+
+    # Data source
+    p.add_argument("--input", required=True, help="HF dataset repo or local JSON/JSONL file path")
+    p.add_argument("--split", default="train", help="Dataset split (HF datasets)")
+    p.add_argument("--samples", type=int, default=-1, help="Limit number of samples (-1 = all)")
+    p.add_argument("--workers", type=int, default=8, help="Number of processes for map/tokenization")
+
+    # Output root
+    p.add_argument("--output-dir", required=True, help="Root output directory (will contain dataset/ & train/)")
+
+    # GPU / sharding
+    p.add_argument("--devices", default="0", help="Comma separated GPU device indices")
+
+    # Formatting / labeling
+    p.add_argument("--chat-template", default="chatml", help="Chat template name")
+    p.add_argument("--max-seq-length", type=int, default=4096)
+    p.add_argument("--train-on-target-only", action="store_true", help="Mask non-assistant tokens")
+    p.add_argument("--instruction-part", default="<|im_start|>user\n")
+    p.add_argument("--response-part", default="<|im_start|>assistant\n")
+
+    # Training overrides (lightweight)
+    p.add_argument("--epochs", type=int, default=3)
+    p.add_argument("--bs", type=int, default=2, help="Per device batch size")
+    p.add_argument("--grad-accum", type=int, default=4)
+    p.add_argument("--lr", type=float, default=2e-4)
+    p.add_argument("--warmup", type=int, default=10)
+    p.add_argument("--lr-scheduler-type", default="linear")
+
+    # LoRA configuration
+    p.add_argument("--lora-r", type=int, default=8, help="LoRA rank (r)")
+    p.add_argument("--lora-alpha", type=int, help="LoRA alpha. If not provided, defaults to 2x LoRA rank")
+    p.add_argument("--lora-dropout", type=float, default=0.0, help="LoRA dropout")
+    p.add_argument("--lora-bias", default="none", help="LoRA bias type")
+    p.add_argument("--lora-random-state", type=int, default=3407, help="LoRA random state")
+    p.add_argument("--lora-target-modules", nargs="*", default=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"], 
+                   help="LoRA target modules (space-separated list)")
+    p.add_argument("--use-rslora", action="store_true", help="Use RSLoRA (Rank-Stabilized LoRA)")
+    p.add_argument("--finetune-vision-layers", action="store_true", help="Finetune vision layers")
+    p.add_argument("--finetune-language-layers", action="store_true", default=True, help="Finetune language layers")
+    p.add_argument("--finetune-attention-modules", action="store_true", default=True, help="Finetune attention modules")
+    p.add_argument("--finetune-mlp-modules", action="store_true", default=True, help="Finetune MLP modules")
+
+    # Misc
+    p.add_argument("--hf-token", help="HF token for gated resources")
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--tmux", action="store_true", help="Use tmux for multi-GPU training")
+
+    return p.parse_args()
+
+
+def build_prep_config(args: argparse.Namespace, dataset_dir: Path, num_gpus: int) -> DatasetPrepConfig:
+    return DatasetPrepConfig(
+        tokenizer_name=args.model,
+        chat_template=args.chat_template,
+        dataset_name=args.input,
+        input_file=args.input if os.path.exists(args.input) else None,
+        split=args.split,
+        num_samples=args.samples,
+        num_proc=args.workers,
+        gpus=num_gpus,
+        output_dir=str(dataset_dir),
+        train_on_target_only=args.train_on_target_only,
+        instruction_part=args.instruction_part,
+        response_part=args.response_part,
+        max_seq_length=args.max_seq_length,
+        hf_token=args.hf_token,
+    )
+
+
+def build_training_configs(model_name: str, max_seq_length: int, num_gpus: int, train_output_dir: Path, args: argparse.Namespace):
+    template = get_training_config_template(
+        model_name, 
+        num_gpus=num_gpus, 
+        max_seq_length=max_seq_length, 
+        lora_r=args.lora_r, 
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        lora_bias=args.lora_bias,
+        lora_random_state=args.lora_random_state,
+        lora_target_modules=args.lora_target_modules,
+        use_rslora=args.use_rslora,
+        finetune_vision_layers=args.finetune_vision_layers,
+        finetune_language_layers=args.finetune_language_layers,
+        finetune_attention_modules=args.finetune_attention_modules,
+        finetune_mlp_modules=args.finetune_mlp_modules
+    )
+    # Apply overrides
+    targs = template["training_args"]
+    targs["num_train_epochs"] = args.epochs
+    targs["per_device_train_batch_size"] = args.bs
+    targs["gradient_accumulation_steps"] = args.grad_accum
+    targs["learning_rate"] = args.lr
+    targs["warmup_steps"] = args.warmup
+    targs["lr_scheduler_type"] = args.lr_scheduler_type
+    targs["seed"] = args.seed
+    targs["output_dir"] = str(train_output_dir)
+    return template
+
+
+def main():  # noqa: C901
+    args = parse_args()
+
+    root_out = Path(args.output_dir).absolute()
+    dataset_dir = root_out / "dataset"
+    train_dir = root_out / "train"
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    train_dir.mkdir(parents=True, exist_ok=True)
+
+    devices = [int(x) for x in args.devices.split(',') if x.strip()]
+    num_gpus = len(devices)
+
+    # 1. Dataset preparation (idempotent if already exists with metadata)
+    prep_cfg = build_prep_config(args, dataset_dir, num_gpus)
+
+    # If shards already exist, skip unless user forces (not implemented yet)
+    shard_0 = dataset_dir / "shard_0"
+    if not shard_0.exists():
+        print(f"[Dataset] Preparing dataset into {dataset_dir} ...")
+        prepare_dataset(prep_cfg)
+    else:
+        print(f"[Dataset] Found existing shards in {dataset_dir}, skipping preparation.")
+
+    # 2. Build training configuration
+    training_cfg_dict = build_training_configs(
+        model_name=args.model,
+        max_seq_length=args.max_seq_length,
+        num_gpus=num_gpus,
+        train_output_dir=train_dir,
+        args=args,
+    )
+
+    # Inject dataset path
+    training_cfg_dict['opensloth_config']['data_cache_path'] = str(dataset_dir)
+    training_cfg_dict['opensloth_config']['devices'] = devices
+
     # Create Pydantic objects
-    opensloth_cfg = OpenSlothConfig(**training_config['opensloth_config'])
-    train_args = TrainingArguments(**training_config['training_args'])
-    
-    # Handle dry run
-    if args.dry_run:
-        print("🔍 DRY RUN: SFT training configuration:")
-        summary = {
-            "dataset": str(dataset_path),
-            "opensloth_config": opensloth_cfg.model_dump(),
-            "training_args": train_args.model_dump(),
-        }
-        print(json.dumps(summary, indent=2))
-        return
-    
-    # Print training summary
-    print("🚀 Starting SFT training...")
-    print(f"📁 Dataset: {dataset_path}")
-    print(f"🤖 Model: {opensloth_cfg.fast_model_args.model_name}")
-    print(f"💾 Output: {train_args.output_dir}")
-    print(f"🖥️  Devices: {opensloth_cfg.devices}")
-    
-    global_batch_size = len(opensloth_cfg.devices) * train_args.per_device_train_batch_size * train_args.gradient_accumulation_steps
-    print(f"📊 Global batch size: {global_batch_size}")
-    
-    # Run training
-    try:
-        run_training(opensloth_cfg, train_args, use_tmux=args.tmux)
-        print(f"✅ SFT Training complete. Model saved to: {train_args.output_dir}")
-    except Exception as e:
-        print(f"❌ Training failed: {e}")
-        sys.exit(1)
+    opensloth_cfg = OpenSlothConfig(**training_cfg_dict['opensloth_config'])
+    train_args = TrainingArguments(**training_cfg_dict['training_args'])
+
+    summary = {
+        "dataset_dir": str(dataset_dir),
+        "train_output_dir": str(train_dir),
+        "devices": devices,
+        "global_batch_size": len(devices) * train_args.per_device_train_batch_size * train_args.gradient_accumulation_steps,
+    }
+    print("[Config] Unified run summary:\n" + json.dumps(summary, indent=2))
+
+    # 3. Training
+    print("[Train] Starting SFT training ...")
+    run_training(opensloth_cfg, train_args, use_tmux=args.tmux)
+    print(f"[Done] Training complete. Outputs in {train_dir}")
 
 
 if __name__ == "__main__":
