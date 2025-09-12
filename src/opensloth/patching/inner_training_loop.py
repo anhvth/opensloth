@@ -19,8 +19,6 @@ def patch_inner_training_loop_for_sft(trainer, sequence_packing):
     # sequence_packing = opensloth_config.sequence_packing
     
     # Initialize memory monitor for detecting memory issues
-    from opensloth.memory_monitor import MemoryMonitor, check_for_memory_leaks
-    memory_monitor = MemoryMonitor()
 
     @patch
     def _inner_training_loop(
@@ -252,7 +250,6 @@ def patch_inner_training_loop_for_sft(trainer, sequence_packing):
         )
         
         # Log initial memory state for monitoring
-        memory_monitor.log_memory_summary(0, "Training start ")
 
         self.state.epoch = 0
         start_time = time.time()
@@ -482,17 +479,8 @@ def patch_inner_training_loop_for_sft(trainer, sequence_packing):
                         # Memory monitoring and cleanup before critical operations
                         
                         # Check memory health and potential leaks
-                        memory_monitor.check_memory_health(self.state.global_step)
-                        check_for_memory_leaks(model, self.state.global_step)
                         
-                        # Periodic deep memory cleanup every 50 steps to prevent accumulation
-                        if self.state.global_step % 50 == 0:
-                            memory_monitor.log_memory_summary(self.state.global_step, "Pre-cleanup ")
-                            gc.collect()
-                            if torch.cuda.is_available():
-                                torch.cuda.empty_cache()
-                            memory_monitor.log_memory_summary(self.state.global_step, "Post-cleanup ")
-                        
+
                         # Since we perform prefetching, we need to manually set sync_gradients to True
                         self.accelerator.gradient_state._set_sync_gradients(True)
 

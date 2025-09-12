@@ -141,12 +141,3 @@ def run_training(
 
 
 __all__ = [ "run_training"]
-
-
-# Export DatasetPrepConfig for convenience
-def __getattr__(name):
-    if name == "DatasetPrepConfig":
-        from opensloth.opensloth_config import DatasetPrepConfig
-
-        return DatasetPrepConfig
-    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

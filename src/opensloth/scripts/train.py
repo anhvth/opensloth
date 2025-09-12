@@ -25,10 +25,7 @@ from pathlib import Path
 from datetime import datetime
 
 # Import unsloth FIRST (critical for OpenSloth) when training stage begins; we delay until needed.
-
-from opensloth.opensloth_config import DatasetPrepConfig, OpenSlothConfig, TrainingArguments
-from opensloth.scripts.prepare_dataset import prepare_dataset, get_training_config_template  # reuse existing logic
-from opensloth.api import run_training
+# Heavy imports are lazily loaded inside functions to make --help fast
 
 
 def parse_args() -> argparse.Namespace:
@@ -89,7 +86,10 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def build_prep_config(args: argparse.Namespace, dataset_dir: Path, num_gpus: int) -> DatasetPrepConfig:
+def build_prep_config(args: argparse.Namespace, dataset_dir: Path, num_gpus: int):
+    # Lazy import to make --help fast
+    from opensloth.opensloth_config import DatasetPrepConfig
+    
     return DatasetPrepConfig(
         tokenizer_name=args.model,
         chat_template=args.chat_template,
@@ -109,6 +109,9 @@ def build_prep_config(args: argparse.Namespace, dataset_dir: Path, num_gpus: int
 
 
 def build_training_configs(model_name: str, max_seq_length: int, num_gpus: int, train_output_dir: Path, args: argparse.Namespace):
+    # Lazy import to make --help fast
+    from opensloth.scripts.prepare_dataset import get_training_config_template
+    
     template = get_training_config_template(
         model_name, 
         num_gpus=num_gpus, 
@@ -140,6 +143,11 @@ def build_training_configs(model_name: str, max_seq_length: int, num_gpus: int, 
 
 def main():  # noqa: C901
     args = parse_args()
+
+    # Lazy imports after argument parsing to make --help fast
+    from opensloth.opensloth_config import OpenSlothConfig, TrainingArguments
+    from opensloth.scripts.prepare_dataset import prepare_dataset
+    from opensloth.api import run_training
 
     root_out = Path(args.output_dir).absolute()
     dataset_dir = root_out / "dataset"

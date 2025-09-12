@@ -196,12 +196,14 @@ def create_sft_trainer(
     
     
     hf_train_args.skip_prepare_dataset = True  # type: ignore[attr-defined]
-    trainer =  SFTTrainer(
+    trainer = SFTTrainer(
         model=model,
         train_dataset=train_dataset,
-        args=hf_train_args,          # type: ignore[arg-type]
-        tokenizer=tokenizer,         # type: ignore[arg-type]
+        args=hf_train_args,  # type: ignore[arg-type]
+        tokenizer=tokenizer,  # type: ignore[arg-type]
         data_collator=data_collator,
+        max_seq_length=_cfg.fast_model_args.max_seq_length,
+        dataset_num_proc=None,  # Use None to avoid deadlocks in multi-process
     )
     trainer = patch_log_for_multi_gpu(trainer)
     return trainer
