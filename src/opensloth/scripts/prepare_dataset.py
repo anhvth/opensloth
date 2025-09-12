@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from opensloth.opensloth_config import DatasetPrepConfig
 from typing import Dict, Any, Optional
 
-def get_training_config_template(model_name: str, num_gpus: int = 1, max_seq_length: int = 4096, lora_r: int = 8, lora_alpha: Optional[int] = None, lora_dropout: float = 0.0, lora_bias: str = "none", lora_random_state: int = 3407, lora_target_modules: Optional[list[str]] = None, use_rslora: bool = False, finetune_vision_layers: bool = False, finetune_language_layers: bool = True, finetune_attention_modules: bool = True, finetune_mlp_modules: bool = True, full_finetuning: bool = False, load_in_4bit: bool = True, load_in_8bit: bool = False) -> Dict[str, Any]:
+def get_training_config_template(model_name: str, num_gpus: int = 1, max_seq_length: int = 4096, lora_r: int = 8, lora_alpha: Optional[int] = None, lora_dropout: float = 0.0, lora_bias: str = "none", lora_random_state: int = 3407, lora_target_modules: Optional[list[str]] = None, use_rslora: bool = False, finetune_vision_layers: bool = False, finetune_language_layers: bool = True, finetune_attention_modules: bool = True, finetune_mlp_modules: bool = True, load_in_4bit: bool = True, load_in_8bit: bool = False) -> Dict[str, Any]:
     """Get a training configuration template."""
     # If lora_alpha not provided, default to 2x lora_r
     if lora_alpha is None:
@@ -36,7 +36,6 @@ def get_training_config_template(model_name: str, num_gpus: int = 1, max_seq_len
                 "max_seq_length": max_seq_length,
                 "load_in_4bit": load_in_4bit,
                 "load_in_8bit": load_in_8bit,
-                "full_finetuning": full_finetuning,
                 "use_gradient_checkpointing": "unsloth",
                 "fast_inference": False,
                 "max_lora_rank": None,

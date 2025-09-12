@@ -33,11 +33,6 @@ class FastModelArgs(BaseModel):
         description="Load the model in 8-bit.", 
         json_schema_extra={'cli_alias': 'load-in-8bit'}
     )
-    full_finetuning: bool = Field(
-        False, 
-        description="Perform full fine-tuning instead of LoRA.", 
-        json_schema_extra={'cli_alias': 'full-finetuning'}
-    )
     use_gradient_checkpointing: str = "unsloth"
     fast_inference: bool = False
 
@@ -95,7 +90,7 @@ class OpenSlothConfig(BaseModel):
     )
     devices: list[int] = Field(default=[0], description="List of GPU indices to use")
     fast_model_args: FastModelArgs
-    lora_args: LoraArgs | None = Field(default=None)
+    lora_args: LoraArgs = Field(description="LoRA configuration (required for training)")
     pretrained_lora: str | None = Field(
         default=None,
         description="Path to pretrained LoRA model for continuous LoRA training",

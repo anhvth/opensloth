@@ -1,39 +1,20 @@
 #!/usr/bin/env python3
 """Unified SFT pipeline: prepare dataset then launch training.
 
-Usage (singl    # Model l    args = p.parse_args()
-    
-    # Set default quantization if neither is specified
-    if not args.load_in_4bit and not args.load_in_8bit:
-        args.load_in_4bit = True  # Default to 4-bit
-    
-    # Validation
-    if args.load_in_4bit and args.load_in_8bit:
-        p.error(\"Cannot use both --load-in-4bit and --load-in-8bit simultaneously\")
-    
-    if args.full_finetuning and any([args.lora_r != 8, args.lora_alpha is not None, 
-                                    args.lora_dropout != 0.0, args.use_rslora]):
-        print(\"Warning: LoRA arguments will be ignored when using --full-finetuning\")
-    
-    return argsiguration
-    p.add_argument(\"--full-finetuning\", action=\"store_true\", help=\"Perform full fine-tuning instead of LoRA\")
-    p.add_argument(\"--load-in-4bit\", action=\"store_true\", help=\"Load model in 4-bit (QLoRA)\")
-    p.add_argument(\"--load-in-8bit\", action=\"store_true\", help=\"Load model in 8-bit\")ONL file with LoRA):
+Usage (single GPU with LoRA):
   opensloth-sft-run \
     --model /path/to/model \
     --input data/x1.jsonl \
     --output-dir outputs/demo_run \
-    --devices 0,1 \
+    --devices 0 \
     --samples 1000 --max-seq-length 4096
 
-Usage (full fine-tuning with 8-bit quantization):
+Usage (multi-GPU with LoRA):
   opensloth-sft-run \
     --model /path/to/model \
     --input data/x1.jsonl \
     --output-dir outputs/demo_run \
     --devices 0,1 \
-    --full-finetuning \
-    --load-in-8bit \
     --samples 1000 --max-seq-length 4096
 
 Usage (LoRA with no quantization):
@@ -44,7 +25,7 @@ Usage (LoRA with no quantization):
     --devices 0,1 \
     --lora-r 16 --lora-alpha 32 \
     --samples 1000 --max-seq-length 4096
-    
+
 Note: Defaults to 4-bit quantization unless --load-in-8bit is specified or both are disabled.
 
 This will create:
@@ -118,7 +99,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--finetune-mlp-modules", action="store_true", default=True, help="Finetune MLP modules")
 
     # Model loading configuration
-    p.add_argument("--full-finetuning", action="store_true", help="Perform full fine-tuning instead of LoRA")
     p.add_argument("--load-in-4bit", action="store_true", default=True, help="Load model in 4-bit (QLoRA)")
     p.add_argument("--load-in-8bit", action="store_true", help="Load model in 8-bit")
 
@@ -129,13 +109,13 @@ def parse_args() -> argparse.Namespace:
 
     args = p.parse_args()
     
+    # Set default quantization if neither is specified
+    if not args.load_in_4bit and not args.load_in_8bit:
+        args.load_in_4bit = True  # Default to 4-bit
+    
     # Validation
     if args.load_in_4bit and args.load_in_8bit:
         p.error("Cannot use both --load-in-4bit and --load-in-8bit simultaneously")
-    
-    if args.full_finetuning and any([args.lora_r != 8, args.lora_alpha is not None, 
-                                    args.lora_dropout != 0.0, args.use_rslora]):
-        print("Warning: LoRA arguments will be ignored when using --full-finetuning")
     
     return args
 
@@ -205,7 +185,6 @@ def build_training_configs(model_name: str, max_seq_length: int, num_gpus: int, 
         finetune_language_layers=args.finetune_language_layers,
         finetune_attention_modules=args.finetune_attention_modules,
         finetune_mlp_modules=args.finetune_mlp_modules,
-        full_finetuning=args.full_finetuning,
         load_in_4bit=args.load_in_4bit,
         load_in_8bit=args.load_in_8bit
     )
@@ -219,10 +198,6 @@ def build_training_configs(model_name: str, max_seq_length: int, num_gpus: int, 
     targs["lr_scheduler_type"] = args.lr_scheduler_type
     targs["seed"] = args.seed
     targs["output_dir"] = str(train_output_dir)
-    
-    # Handle full finetuning - disable LoRA
-    if args.full_finetuning:
-        template["opensloth_config"]["lora_args"] = None
     
     return template
 

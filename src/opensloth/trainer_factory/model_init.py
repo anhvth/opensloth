@@ -102,9 +102,7 @@ def _init_model_and_tokenizer(cfg: OpenSlothConfig, unsloth_modules: dict[str, A
 
     # Apply LoRA configuration with proper error handling
     try:
-        if cfg.fast_model_args.full_finetuning:
-            logger.info("Full fine-tuning enabled. Skipping PEFT model setup.")
-        elif cfg.pretrained_lora:
+        if cfg.pretrained_lora:
             # Load the pretrained adapter onto the base model
             logger.info("Loading pretrained LoRA adapter onto the base model...")
             original_model = model
@@ -117,7 +115,7 @@ def _init_model_and_tokenizer(cfg: OpenSlothConfig, unsloth_modules: dict[str, A
             else:
                 logger.info("LoRA adapter loaded successfully")
                 
-        elif cfg.lora_args:
+        else:
             # Initialize a new LoRA adapter
             logger.info(f"Initializing new LoRA adapter... Args: {cfg.lora_args}")
             original_model = model

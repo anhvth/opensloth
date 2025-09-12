@@ -17,7 +17,6 @@ model, tokenizer = FastModel.from_pretrained(
     max_seq_length = 2048,
     load_in_4bit = True,
     load_in_8bit = False,
-    full_finetuning = False,
     device_map="auto"
 )
 
