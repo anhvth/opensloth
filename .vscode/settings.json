@@ -1,0 +1,25 @@
+{
+    "json.schemas": [
+        {
+            "fileMatch": [
+                "**/training_config.json",
+                "**/config.json",
+                "**/*training*.json",
+                "**/*config*.json"
+            ],
+            "url": "./schemas/training_config.schema.json"
+        }
+    ],
+    "json.suggest.includeCompletionsForSnippetValues": true,
+    "json.format.enable": true,
+    "json.validate.enable": true,
+    "json.schemaDownload.enable": true,
+    "files.associations": {
+        "**/training_config.json": "json",
+        "**/config.json": "json"
+    },
+    "editor.quickSuggestions": {
+        "strings": true
+    },
+    "editor.suggest.snippetsPreventQuickSuggestions": false
+}
