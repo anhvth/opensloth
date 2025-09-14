@@ -37,9 +37,6 @@ def get_training_config_template(model_name: str, num_gpus: int = 1, max_seq_len
                 "load_in_4bit": load_in_4bit,
                 "load_in_8bit": load_in_8bit,
                 "use_gradient_checkpointing": "unsloth",
-                "fast_inference": False,
-                "max_lora_rank": None,
-                "gpu_memory_utilization": 0.7
             },
             "lora_args": {
                 "finetune_vision_layers": finetune_vision_layers,
