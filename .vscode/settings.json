@@ -21,5 +21,14 @@
     "editor.quickSuggestions": {
         "strings": true
     },
-    "editor.suggest.snippetsPreventQuickSuggestions": false
+    "editor.suggest.snippetsPreventQuickSuggestions": false,
+    "python.analysis.exclude": [
+        ".venv",
+        "env",
+        "venv",
+        "__pycache__",
+        "hf-models",
+        "unsloth_compiled_cache",
+        ".cache"
+    ]
 }

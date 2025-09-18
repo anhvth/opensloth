@@ -31,6 +31,7 @@ def patch_inner_training_loop_for_sft(trainer, sequence_packing):
     ):
         # Import modules at function level to avoid scoping issues
         import gc
+
         import torch
         self.accelerator.free_memory()
         self._train_batch_size = batch_size

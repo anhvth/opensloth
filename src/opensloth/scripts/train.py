@@ -77,10 +77,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--response-part", default="<|im_start|>assistant\n")
 
     # Training overrides (lightweight)
-    p.add_argument("--epochs", type=int, default=3)
-    p.add_argument("--bs", type=int, default=2, help="Per device batch size")
-    p.add_argument("--grad-accum", type=int, default=4)
-    p.add_argument("--lr", type=float, default=2e-4)
+    p.add_argument("--epochs", type=int, default=1)
+    p.add_argument("--bs", type=int, default=1, help="Per device batch size")
+    p.add_argument("--grad-accum", type=int, default=64)
+    p.add_argument("--lr", type=float, default=5e-5)
     p.add_argument("--warmup", type=int, default=10)
     p.add_argument("--lr-scheduler-type", default="linear")
 
@@ -101,6 +101,13 @@ def parse_args() -> argparse.Namespace:
     # Model loading configuration
     p.add_argument("--load-in-4bit", action="store_true", default=True, help="Load model in 4-bit (QLoRA)")
     p.add_argument("--load-in-8bit", action="store_true", help="Load model in 8-bit")
+
+    # Sequence packing
+    p.add_argument("--sequence-packing", action="store_true", default=True, help="Enable sequence packing (default: True)")
+    p.add_argument("--no-sequence-packing", dest="sequence_packing", action="store_false", help="Disable sequence packing")
+
+    # Cache control
+    p.add_argument("--force-reprocess", action="store_true", help="Force reprocessing of dataset, ignore existing cache")
 
     # Misc
     p.add_argument("--hf-token", help="HF token for gated resources")
@@ -186,7 +193,8 @@ def build_training_configs(model_name: str, max_seq_length: int, num_gpus: int, 
         finetune_attention_modules=args.finetune_attention_modules,
         finetune_mlp_modules=args.finetune_mlp_modules,
         load_in_4bit=args.load_in_4bit,
-        load_in_8bit=args.load_in_8bit
+        load_in_8bit=args.load_in_8bit,
+        sequence_packing=args.sequence_packing
     )
     # Apply overrides
     targs = template["training_args"]
@@ -222,10 +230,13 @@ def main():  # noqa: C901
     train_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Dataset preparation - check if hash-based dataset exists
-    if dataset_dir.exists() and any(dataset_dir.iterdir()):
+    if not args.force_reprocess and dataset_dir.exists() and any(dataset_dir.iterdir()):
         print(f"[Dataset] Found existing dataset with hash {dataset_hash}, reusing: {dataset_dir}")
     else:
-        print(f"[Dataset] Creating new dataset with hash {dataset_hash}: {dataset_dir}")
+        if args.force_reprocess:
+            print(f"[Dataset] Force reprocessing enabled, ignoring cache: {dataset_dir}")
+        else:
+            print(f"[Dataset] Creating new dataset with hash {dataset_hash}: {dataset_dir}")
         dataset_dir.mkdir(parents=True, exist_ok=True)
         prep_cfg = build_prep_config(args, dataset_dir, num_gpus)
         prepare_dataset(prep_cfg)
